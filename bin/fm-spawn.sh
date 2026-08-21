@@ -36,8 +36,9 @@
 #   positional harness arg still works for back-compat.
 #   --model <name> and --effort <low|medium|high|xhigh|max> are concrete profile
 #   axes chosen by firstmate at intake. They are only threaded into harnesses whose
-#   installed CLIs were verified to support that axis; unsupported axes are omitted
-#   from that harness's launch rather than guessed.
+#   installed CLIs were verified to support that axis. A selected effort that is
+#   unsupported by a harness with an effort axis refuses the launch, while a
+#   harness with no separate effort axis keeps the requested value in metadata.
 #   --backend <name> is the explicit runtime session-provider backend for this
 #   exact task only (docs/configuration.md "Runtime backend" owns when that flag
 #   is authorized). Without it, the script resolves FM_BACKEND, then
@@ -1392,20 +1393,27 @@ effort_flag_for_harness() {
       esac
       ;;
     codex)
-      # The installed codex config schema uses model_reasoning_effort, and the
-      # bundled model catalog advertises low|medium|high|xhigh. Omit max rather
-      # than passing an unsupported value.
+      # codex-cli 0.149.0 accepts max through the same model_reasoning_effort
+      # override used for its lower reasoning levels.
       case "$effort" in
-        low|medium|high|xhigh) printf -- '-c %s ' "$(shell_quote "model_reasoning_effort=\"$effort\"")" ;;
+        low|medium|high|xhigh|max) printf -- '-c %s ' "$(shell_quote "model_reasoning_effort=\"$effort\"")" ;;
+        *)
+          echo "error: harness '$harness' does not support effort '$effort'; refusing to launch without the requested effort flag" >&2
+          return 1
+          ;;
       esac
       ;;
     grok)
       # grok exposes both --effort and --reasoning-effort; firstmate's profile
       # axis is the reasoning knob. As of grok 0.2.99, --reasoning-effort accepts
-      # only low|medium|high and rejects both xhigh and max, so omit those rather
-      # than passing a known-bad value.
+      # only low|medium|high and rejects both xhigh and max, so refuse those rather
+      # than passing a known-bad value or silently dropping the requested effort.
       case "$effort" in
         low|medium|high) printf -- '--reasoning-effort %s ' "$(shell_quote "$effort")" ;;
+        *)
+          echo "error: harness '$harness' does not support effort '$effort'; refusing to launch without the requested effort flag" >&2
+          return 1
+          ;;
       esac
       ;;
     pi|pi-signed)
@@ -1438,6 +1446,10 @@ effort_flag_for_harness() {
     # effort flag.
   esac
 }
+
+# Validate the selected effort before harness wiring, endpoint creation, or task
+# metadata publication so an unsupported effort cannot leave a misleading task record.
+EFFORTFLAG=$(effort_flag_for_harness "$HARNESS" "$EFFORT")
 
 case "$LAUNCH" in
   *__MUSEBIN__*)
@@ -2728,7 +2740,6 @@ sq_piwatch=$(shell_quote "$PROJ_ABS/.pi/extensions/fm-primary-pi-watch.ts")
 sq_opinput=$(shell_quote "$FM_ROOT/bin/fm-operational-input.sh")
 sq_worktree=$(shell_quote "$WT")
 MODELFLAG=$(model_flag_for_harness "$HARNESS" "$MODEL")
-EFFORTFLAG=$(effort_flag_for_harness "$HARNESS" "$EFFORT")
 LAUNCH=${LAUNCH//__MODELFLAG__/$MODELFLAG}
 LAUNCH=${LAUNCH//__EFFORTFLAG__/$EFFORTFLAG}
 LAUNCH=${LAUNCH//__BRIEF__/$sq_brief}
