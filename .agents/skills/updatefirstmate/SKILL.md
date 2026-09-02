@@ -1,7 +1,7 @@
 ---
 name: updatefirstmate
 description: >-
-  Self-update a running firstmate and its secondmates to the latest from origin.
+  Self-update a running firstmate and its secondmates to the latest canonical firstmate.
   Use when the captain invokes /updatefirstmate (e.g. "/updatefirstmate", "update firstmate", "pull the latest firstmate").
   Fast-forwards this firstmate repo's default branch and every local or remote secondmate through its guarded update path (never forced, never disruptive), then re-reads AGENTS.md and nudges each updated secondmate to do the same, so the whole tree runs the latest bin/ and instructions.
 user-invocable: true
@@ -16,8 +16,14 @@ Firstmate is its own repo, behind the same no-mistakes gate as any project, so n
 Only `AGENTS.md`, `bin/`, and `.agents/skills/` are a running firstmate instruction surface; public `skills/` is installer-facing and is not loaded by firstmate.
 This skill performs that pull for the running main firstmate and every secondmate, without disturbing any in-flight work.
 
+The pull comes from **the canonical firstmate repo, not the user's own fork**.
+Firstmate is a shared template, so a real install is usually a fork: `origin` is the user's fork - their push target, where their PRs go - and `upstream` is the canonical repo.
+Updating such an install from `origin` would deliver whatever that fork was last synced to and still report success, so each checkout fast-forwards from `upstream` whenever it defines that remote and from `origin` otherwise.
+That resolution is per checkout and needs no configuration, because `upstream` already means "the canonical repo I forked" by universal git convention.
+An install with no `upstream` remote keeps pulling from `origin` exactly as before.
+
 The update is **fast-forward only** - the same sanctioned self-write as the fleet sync firstmate already runs.
-For a remote route, it updates the configured Firstmate code root on that host from its own origin, then guardedly fast-forwards the persistent home to that code-root commit.
+For a remote route, it updates the configured Firstmate code root on that host the same way, then guardedly fast-forwards the persistent home to that code-root commit.
 It never forces, never creates a merge commit, never stashes, and advances a target only on a clean fast-forward; anything dirty, diverged, offline, or on the wrong branch is skipped and reported.
 A tracked-files fast-forward leaves the gitignored operational dirs (data/, state/, config/, projects/, .no-mistakes/) untouched, so a secondmate's in-flight work is never disrupted.
 This touches only the firstmate repo and its own worktrees, never anything under `projects/`.
@@ -28,7 +34,7 @@ This touches only the firstmate repo and its own worktrees, never anything under
    ```sh
    bin/fm-update.sh
    ```
-   It fast-forwards this firstmate repo's default branch from origin, then updates every registered local or remote secondmate home through its placement-specific guarded path.
+   It fast-forwards this firstmate repo's default branch from the update remote resolved above, then updates every registered local or remote secondmate home through its placement-specific guarded path.
    It prints one status line per target (`updated <old>..<new>` / `already current` / `skipped: <reason>`), followed by two action lines that tell you exactly what to do next:
    - `reread-firstmate: yes|no`
    - `nudge-secondmates: fm-<id>...|none`

@@ -1,9 +1,13 @@
 #!/usr/bin/env bash
-# Self-update a running firstmate and its secondmates to the latest origin.
+# Self-update a running firstmate and its secondmates to the latest canonical
+# firstmate.
 #
 # Mechanical half of the /updatefirstmate skill. Fast-forwards the running
-# firstmate repo's default branch from origin, then fast-forwards every
-# registered secondmate home. Local homes are treehouse worktrees or standalone
+# firstmate repo's default branch from this install's update remote - `upstream`
+# when the checkout defines it, otherwise `origin` (bin/fm-ff-lib.sh's
+# update_remote owns that rule and why a forked install must not update from its
+# own fork) - then fast-forwards every registered secondmate home the same way.
+# Local homes are treehouse worktrees or standalone
 # clones; remote routes update their configured code root on that host and then
 # fast-forward the persistent home to that root. FAST-FORWARD ONLY, exactly like
 # fm-fleet-sync.sh: never force, never create a merge commit, never stash;
@@ -16,7 +20,7 @@
 # default branch, so a fast-forward there advances HEAD only and never touches
 # any other worktree's checkout or the shared `main` branch.
 #
-# The fast-forward mechanics live in bin/fm-ff-lib.sh (base_mode "origin" here);
+# The fast-forward mechanics live in bin/fm-ff-lib.sh (base_mode "remote" here);
 # the same library drives the local-HEAD secondmate sync used by fm-spawn.sh and
 # fm-bootstrap.sh, so there is one ff implementation, not several.
 #
@@ -51,12 +55,18 @@ fi
 # --- main firstmate repo ---------------------------------------------------
 
 reread_firstmate="no"
-ff_target "$FM_ROOT" "firstmate" origin no no
+ff_target "$FM_ROOT" "firstmate" remote no no
 if [ "$FF_STATUS" = "updated" ] && [ -n "$FF_INSTR" ]; then
   reread_firstmate="yes"
 fi
 
 # --- secondmates -----------------------------------------------------------
+# Secondmate homes are worktrees or standalone clones of this same repo, so they
+# take the same base_mode as the primary and resolve their own update remote
+# per home: a worktree sees the primary's remotes and follows the same canonical
+# repo, while a standalone clone with no `upstream` still follows its own origin.
+# Diverging here would leave the fleet on a different firstmate than its primary.
+#
 # An updated live secondmate is nudged whenever it advanced (nudge_requires_instr
 # is "no" here): /updatefirstmate's nudge is a gentle re-read steer, kept on the
 # same condition it has always used.
@@ -66,7 +76,7 @@ FF_SEEN_HOMES=""
 
 # Live direct reports first: state/<id>.meta with kind=secondmate carries the
 # authoritative home= path.
-sweep_live_secondmate_metas "$STATE" origin no
+sweep_live_secondmate_metas "$STATE" remote no
 
 # Registry backstop: a secondmate registered in data/secondmates.md but without
 # a live meta (e.g. between restarts) is still its persistent on-disk home.
@@ -99,7 +109,7 @@ if [ -f "$SECONDMATES_MD" ]; then
         echo "remote secondmate $id: skipped on $SECONDMATE_REGISTRY_HOST: ${remote_out%%$'\n'*}" >&2
       fi
     else
-      process_secondmate "$id" "$home" "" origin no
+      process_secondmate "$id" "$home" "" remote no
     fi
   done < "$SECONDMATES_MD"
 fi

@@ -18,6 +18,11 @@
 # with the enclosing repo left untouched, in both the whole-fleet and
 # single-project forms, while a symlinked clone dir still syncs.
 #
+# It also pins the boundary against firstmate's own self-update rule: firstmate
+# self-updates from `upstream` when its checkout defines that remote (see
+# bin/fm-ff-lib.sh's update_remote), but a project clone is NOT a fork of
+# firstmate, so a project's own `upstream` remote must never become its sync base.
+#
 # It also pins the orphaned .git/packed-refs.lock recovery in the fetch step
 # (fetch_with_packed_refs_lock_guard, backed by bin/fm-lock-lib.sh's shared
 # staleness proof): a provably-stale lock is retried then removed and the clone
@@ -365,6 +370,35 @@ test_on_default_clean_behind_fast_forwards() {
   pass "on-default clean behind clone still fast-forwards"
 }
 
+test_project_upstream_remote_is_never_the_sync_base() {
+  local home clone out other before
+  home=$(new_home)
+  clone=$(build_pair "$home" upsilon)
+  # A second, unrelated repo wired in as this PROJECT's `upstream` remote, ahead
+  # of origin. Plenty of real project clones have one; it belongs to the project's
+  # own fork topology and says nothing about where firstmate gets its updates.
+  other="$home/other-upsilon"
+  git init -q "$other"
+  git -C "$other" symbolic-ref HEAD refs/heads/main
+  commit_file "$other" file.txt other-only "OTHER"
+  git -C "$clone" remote add upstream "$other"
+  git -C "$clone" fetch -q upstream
+  advance_origin "$home" upsilon C1
+  before=$(git -C "$other" rev-parse HEAD)
+
+  out=$(run_sync "$home" "$clone")
+
+  assert_contains "$out" "upsilon: synced" "project clone with an upstream remote still syncs"
+  [ "$(head_sha "$clone")" = "$(git -C "$clone" rev-parse origin/main)" ] \
+    || fail "project clone was not fast-forwarded to its own origin"
+  [ "$(head_sha "$clone")" != "$before" ] \
+    || fail "project clone followed its upstream remote (firstmate's self-update rule leaked into project sync)"
+  grep -qx 'v0' "$clone/file.txt" && fail "project clone did not advance at all, so the base is untested"
+  grep -qx 'C1' "$clone/file.txt" \
+    || fail "project clone working tree does not hold its origin's content"
+  pass "project clone syncs from its own origin, never from an upstream remote"
+}
+
 test_already_current_unchanged() {
   local home clone out before
   home=$(new_home)
@@ -702,6 +736,7 @@ test_non_default_branch_is_stuck_untouched
 test_diverged_is_stuck_untouched
 test_on_default_clean_behind_fast_forwards
 test_already_current_unchanged
+test_project_upstream_remote_is_never_the_sync_base
 test_no_origin_skipped
 test_local_only_skipped
 test_single_project_by_bare_name_resolves

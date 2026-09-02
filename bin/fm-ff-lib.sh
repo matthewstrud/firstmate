@@ -5,15 +5,16 @@
 # This is the one implementation of "advance a firstmate checkout to a base by a
 # clean fast-forward, never forcing, merging, or stashing" used by every sync
 # path:
-#   - /updatefirstmate (bin/fm-update.sh) pulls from origin: base_mode "origin".
+#   - /updatefirstmate (bin/fm-update.sh) pulls from this install's update remote:
+#     base_mode "remote". See update_remote for which remote that is.
 #   - the local-HEAD secondmate sync (bin/fm-spawn.sh on launch, bin/fm-bootstrap.sh
 #     on startup) follows the PRIMARY checkout's current default-branch commit:
-#     base_mode is that local commit, with NO fetch and no origin dependency.
+#     base_mode is that local commit, with NO fetch and no remote dependency.
 #
 # A linked-worktree secondmate home already holds the primary's commit in the
 # shared object store, so its local-HEAD sync is a purely local fast-forward that
 # never touches the network. A standalone clone moves through that path only when
-# it already has the target; otherwise it is skipped until the origin path updates it.
+# it already has the target; otherwise it is skipped until the remote path updates it.
 # A tracked-files fast-forward never touches the gitignored operational dirs
 # (data/, state/, config/, projects/, .no-mistakes/), so it cannot disturb a
 # secondmate's backlog, projects, or in-flight work.
@@ -48,6 +49,36 @@ default_branch() {
     fi
   done
   return 1
+}
+
+# The remote this install pulls its UPDATES from, echoed for the caller.
+#
+# firstmate is a shared template, so the expected topology for a real install is
+# a fork: `origin` is the user's own fork - their push target, where their PRs go -
+# and `upstream` is the canonical repo. Fast-forwarding such an install from
+# `origin` delivers whatever that fork happens to have been synced to, which is
+# stale code reported as a successful update unless the user remembers to press
+# GitHub's "Sync fork" first. So prefer `upstream` whenever the repo defines it:
+# that remote name already means "the canonical repo I forked" by universal git
+# convention, which is why this needs no configuration of its own.
+#
+# A non-fork install has no `upstream` remote and keeps pulling from `origin`,
+# unchanged. Resolution is per target, so a secondmate home that is a worktree of
+# this repo sees the same remotes and follows the same canonical repo as the
+# primary, while a standalone clone without an `upstream` still follows its own
+# `origin` rather than being skipped.
+#
+# This governs firstmate's OWN checkouts only. Project clones under projects/ are
+# not forks of firstmate and are refreshed from their own origin by
+# bin/fm-fleet-sync.sh, which has its own fast-forward implementation and never
+# reaches this library.
+update_remote() {
+  local dir=$1
+  if git -C "$dir" remote get-url upstream >/dev/null 2>&1; then
+    echo upstream
+  else
+    echo origin
+  fi
 }
 
 # Resolve the PRIMARY checkout's current default-branch commit - the local-HEAD
@@ -191,19 +222,20 @@ validate_secondmate_home() {
 }
 
 # A single fetch refreshes every worktree that shares an object store, so fetch
-# each distinct git-common-dir at most once. Used ONLY by the origin base mode;
-# the local-HEAD sync never fetches.
+# each distinct git-common-dir at most once PER REMOTE. Used ONLY by the remote
+# base mode; the local-HEAD sync never fetches.
 FETCHED=""
 fetch_once() {
-  local dir=$1 common
+  local dir=$1 remote=$2 common key
   common=$(git -C "$dir" rev-parse --path-format=absolute --git-common-dir 2>/dev/null || true)
   if [ -n "$common" ]; then
+    key="$remote:$common"
     case " $FETCHED " in
-      *" $common "*) return 0 ;;
+      *" $key "*) return 0 ;;
     esac
   fi
-  if git -C "$dir" fetch origin --prune --quiet 2>/dev/null; then
-    [ -n "$common" ] && FETCHED="$FETCHED $common"
+  if git -C "$dir" fetch "$remote" --prune --quiet 2>/dev/null; then
+    [ -n "$common" ] && FETCHED="$FETCHED $key"
     return 0
   fi
   return 1
@@ -259,9 +291,11 @@ live_secondmate_meta_records() {
 #   FF_INSTR  = comma list of changed instruction paths (only when updated)
 #
 # base_mode selects where the fast-forward base comes from:
-#   origin       - fetch origin and advance to origin/<default> (the /updatefirstmate
-#                  path); requires an origin remote and network reachability.
-#   <commit-ish> - advance to that LOCAL commit with NO fetch and no origin
+#   remote       - fetch this target's update remote (update_remote: `upstream` when
+#                  the target defines it, else `origin`) and advance to
+#                  <remote>/<default> (the /updatefirstmate path); requires that
+#                  remote and network reachability.
+#   <commit-ish> - advance to that LOCAL commit with NO fetch and no remote
 #                  dependency (the local-HEAD secondmate sync). The commit must
 #                  already exist in the target's object store, which it always does
 #                  for a worktree of this same repo; a standalone clone that lacks
@@ -284,23 +318,24 @@ ff_target() {
     return 0
   fi
 
-  local default base cur instr local_rev base_rev before after out
+  local default base cur instr local_rev base_rev before after out remote
   default=$(default_branch "$dir") || {
     echo "$label: skipped: cannot determine default branch"
     return 0
   }
 
   # Resolve the fast-forward base from base_mode (see header).
-  if [ "$base_mode" = origin ]; then
-    if ! git -C "$dir" remote get-url origin >/dev/null 2>&1; then
-      echo "$label: skipped: no origin remote"
+  if [ "$base_mode" = remote ]; then
+    remote=$(update_remote "$dir")
+    if ! git -C "$dir" remote get-url "$remote" >/dev/null 2>&1; then
+      echo "$label: skipped: no $remote remote"
       return 0
     fi
-    if ! fetch_once "$dir"; then
+    if ! fetch_once "$dir" "$remote"; then
       echo "$label: skipped: fetch failed"
       return 0
     fi
-    base="origin/$default"
+    base="$remote/$default"
   else
     base="$base_mode"
   fi

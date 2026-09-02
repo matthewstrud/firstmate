@@ -3,9 +3,13 @@
 # firstmate repo and every registered secondmate home.
 #
 # The guarantees under test mirror fm-fleet-sync.sh and prime directive #3:
-#   - The running firstmate repo (on its default branch) fast-forwards from
-#     origin; a leased secondmate home (detached HEAD on the default branch)
-#     fast-forwards the same way.
+#   - The running firstmate repo (on its default branch) fast-forwards from this
+#     install's update remote; a leased secondmate home (detached HEAD on the
+#     default branch) fast-forwards the same way.
+#   - That update remote is `upstream` when the checkout defines one and `origin`
+#     otherwise, resolved per target: a forked install follows the canonical repo
+#     rather than whatever its own fork was last synced to, and an unforked one
+#     is unchanged.
 #   - FAST-FORWARD ONLY: a dirty, diverged, offline, or wrong-branch target is
 #     skipped and reported, never forced or stashed, so unlanded work survives.
 #   - The update is a single-parent fast-forward (never a merge commit) and a
@@ -85,6 +89,43 @@ bump_origin() {
   git -C "$w/seed" add -A
   git -C "$w/seed" commit -qm "bump-$mode"
   git -C "$w/seed" push -q origin main
+}
+
+# Give a world the canonical `upstream` bare repo a fork topology implies, seeded
+# from the same c1 commit that origin holds. wire=yes also adds the `upstream`
+# remote to the firstmate repo, exactly as a real forked install has it; wire=no
+# leaves the checkout knowing only its own origin.
+add_upstream() {
+  local w=$1 wire=$2
+  git init -q --bare "$w/upstream.git"
+  git -C "$w/upstream.git" symbolic-ref HEAD refs/heads/main
+  git -C "$w/seed" push -q "$w/upstream.git" main
+  git clone -q "$w/upstream.git" "$w/upstream-seed" 2>/dev/null
+  if [ "$wire" = yes ]; then
+    git -C "$w/main" remote add upstream "$w/upstream.git"
+  fi
+}
+
+# Advance the canonical upstream repo by one commit, leaving origin behind.
+# Modes match bump_origin; the content differs from bump_origin's so a target
+# that took the wrong base is visible in the tree, not just in the SHA.
+bump_upstream() {
+  local w=$1 mode=$2
+  git -C "$w/upstream-seed" pull -q origin main >/dev/null 2>&1 || true
+  printf 'u-%s\n' "$mode" >> "$w/upstream-seed/README.md"
+  if [ "$mode" = instr ]; then
+    printf 'upstream-v2\n' > "$w/upstream-seed/AGENTS.md"
+    printf 'echo upstream-b\n' > "$w/upstream-seed/bin/tool.sh"
+    printf 'upstream-s2\n' > "$w/upstream-seed/.agents/skills/note.md"
+  fi
+  git -C "$w/upstream-seed" add -A
+  git -C "$w/upstream-seed" commit -qm "upstream-bump-$mode"
+  git -C "$w/upstream-seed" push -q origin main
+}
+
+# The default-branch tip of a bare repo.
+bare_head() {
+  git -C "$1" rev-parse refs/heads/main
 }
 
 run_update() {
@@ -291,6 +332,92 @@ test_unsafe_secondmate_home_skipped_before_git_update() {
   pass "T11 unsafe secondmate home is not fast-forwarded"
 }
 
+# --- T12: fork topology updates from upstream, not from the user's fork -----
+# The expected topology for a real install: `origin` is the user's own fork and
+# `upstream` is the canonical repo. The fork is left stale at c1 while upstream
+# advances, which is exactly the state a user who forgot GitHub's "Sync fork" is
+# in. Updating from origin there would report success while delivering c1.
+test_fork_updates_from_upstream() {
+  local w out
+  w=$(new_world t12)
+  add_upstream "$w" yes
+  add_sm "$w" sm1
+  bump_upstream "$w" instr
+
+  out=$(run_update "$w")
+
+  assert_contains "$out" "firstmate: updated " "firstmate fast-forwarded from upstream"
+  assert_contains "$out" "secondmate sm1: updated " "secondmate fast-forwarded from upstream"
+  assert_contains "$out" "reread-firstmate: yes" "upstream instruction change triggers reread"
+
+  # The base was upstream's head, and the stale fork's head was NOT delivered.
+  [ "$(git -C "$w/main" rev-parse HEAD)" = "$(bare_head "$w/upstream.git")" ] \
+    || fail "firstmate HEAD is not at the canonical upstream head"
+  [ "$(git -C "$w/main" rev-parse HEAD)" != "$(bare_head "$w/origin.git")" ] \
+    || fail "firstmate updated from the stale fork instead of upstream"
+  [ "$(git -C "$w/sm1" rev-parse HEAD)" = "$(bare_head "$w/upstream.git")" ] \
+    || fail "secondmate HEAD is not at the canonical upstream head"
+  # Content, not just the SHA: the working tree holds upstream's instructions.
+  grep -qx 'upstream-v2' "$w/main/AGENTS.md" \
+    || fail "firstmate working tree does not hold upstream's AGENTS.md"
+  pass "T12 forked install updates from upstream, not from its own stale fork"
+}
+
+# --- T13: no upstream remote keeps the unchanged origin behaviour -----------
+# A canonical repo existing elsewhere is irrelevant to an install that has not
+# wired it up: with no `upstream` remote the base is still origin/<default>.
+test_origin_only_install_updates_from_origin() {
+  local w out
+  w=$(new_world t13)
+  add_upstream "$w" no
+  add_sm "$w" sm1
+  bump_origin "$w" instr
+  bump_upstream "$w" instr
+
+  out=$(run_update "$w")
+
+  assert_contains "$out" "firstmate: updated " "origin-only firstmate fast-forwarded"
+  assert_contains "$out" "secondmate sm1: updated " "origin-only secondmate fast-forwarded"
+  [ "$(git -C "$w/main" rev-parse HEAD)" = "$(bare_head "$w/origin.git")" ] \
+    || fail "origin-only firstmate HEAD is not at origin's head"
+  [ "$(git -C "$w/main" rev-parse HEAD)" != "$(bare_head "$w/upstream.git")" ] \
+    || fail "origin-only firstmate followed a repo it has no remote for"
+  grep -qx 'v2' "$w/main/AGENTS.md" \
+    || fail "origin-only firstmate working tree does not hold origin's AGENTS.md"
+  pass "T13 install without an upstream remote still updates from origin"
+}
+
+# --- T14: the update remote is resolved per target --------------------------
+# A standalone-clone secondmate home is not a worktree of the primary and can
+# have its own remotes. It must follow its OWN update remote rather than
+# inheriting the primary's, so a home cloned straight from the fork keeps
+# tracking that fork instead of being pointed at a repo it has no remote for.
+test_update_remote_resolves_per_target() {
+  local w out standalone
+  w=$(new_world t14)
+  add_upstream "$w" yes
+  standalone="$w/sm2"
+  git clone -q "$w/origin.git" "$standalone"
+  git -C "$standalone" checkout -q --detach HEAD
+  printf 'sm2\n' > "$standalone/.fm-secondmate-home"
+  printf -- '- sm2 - standalone (home: %s; scope: x; projects: p; added 2026-06-23)\n' \
+    "$standalone" > "$w/home/data/secondmates.md"
+  bump_origin "$w" readme
+  bump_upstream "$w" instr
+
+  out=$(run_update "$w")
+
+  assert_contains "$out" "firstmate: updated " "primary followed its upstream remote"
+  assert_contains "$out" "secondmate sm2: updated " "standalone home followed its own origin"
+  [ "$(git -C "$w/main" rev-parse HEAD)" = "$(bare_head "$w/upstream.git")" ] \
+    || fail "primary did not follow upstream"
+  [ "$(git -C "$standalone" rev-parse HEAD)" = "$(bare_head "$w/origin.git")" ] \
+    || fail "standalone secondmate did not follow its own origin"
+  [ "$(git -C "$standalone" rev-parse HEAD)" != "$(git -C "$w/main" rev-parse HEAD)" ] \
+    || fail "the two targets resolved the same base, so per-target resolution is untested"
+  pass "T14 each target resolves its own update remote"
+}
+
 test_updates_main_and_secondmate
 test_reread_gate_is_instruction_only
 test_dirty_secondmate_skipped
@@ -300,5 +427,8 @@ test_registry_backstop_dedup_and_self_exclusion
 test_firstmate_wrong_branch_skipped
 test_firstmate_detached_head_skipped
 test_unsafe_secondmate_home_skipped_before_git_update
+test_fork_updates_from_upstream
+test_origin_only_install_updates_from_origin
+test_update_remote_resolves_per_target
 
 echo "# all fm-update tests passed"
