@@ -69,22 +69,44 @@ default_branch() {
 # means "the canonical repo I forked" by universal git convention, which is why
 # this needs no configuration of its own.
 #
-# The rule is `upstream` when it is an ancestor of HEAD, else `origin` - the
-# ancestry decides, not the mere presence of the remote. Every sync path here is
-# fast-forward-only, so an `upstream` that HEAD has moved beyond can never be a
-# base: a fork carrying commits the canonical repo lacks (its own merged PRs, or
-# the merge commits GitHub's "Sync fork" button itself creates) would be refused
-# forever. That fork falls back to `origin` QUIETLY: it is an ordinary successful
-# update from the user's own fork, not a skip, so the run still reports
-# `updated`/`already current`. A `upstream/<default>` that is missing or cannot
-# be fetched is treated the same way. A checkout already at upstream's head still
-# resolves to `upstream`, since a commit is its own ancestor.
+# THE RULE: prefer `upstream/<default>` only when the fork carries nothing of its
+# own - `origin/<default>` is itself an ancestor of `upstream/<default>` - AND
+# HEAD is an ancestor of `upstream/<default>`. Both must hold; otherwise the base
+# is `origin/<default>`.
+#
+# The first conjunct is what keeps a fleet coherent. Every sync path here is
+# fast-forward-only, so a base is usable only when the target can reach it
+# without a merge. Deciding that from each target's own HEAD would let two
+# checkouts sharing one object store and one set of remotes pick DIFFERENT bases
+# - a primary sitting on a fork-local commit taking `origin` while a home leased
+# at an older, purely-canonical commit takes `upstream` - and they would never
+# re-converge. Asking the REMOTES instead gives every target that shares a remote
+# set the same answer regardless of where its own HEAD sits. It also stops a
+# checkout from latching onto `upstream` and silently never receiving the user's
+# own merged commits, which live only on `origin`.
+#
+# Falling back to `origin` is QUIET and SUCCESSFUL: not a skip, no warning, no
+# change to FF_STATUS or the exit status, so the run still reports
+# `updated`/`already current`. An `upstream/<default>` that is missing or cannot
+# be fetched is treated the same way as a failed ancestry test. Note what that
+# fallback does and does not promise: it tracks the FORK, which drifts behind the
+# canonical repo whenever the fork stops being synced - it is not a way of
+# staying current with `upstream`. Nothing here is a config surface, and nothing
+# self-heals by force: the moment the fork's default branch stops carrying
+# anything of its own (its commits land upstream, or it is reset onto upstream),
+# the first conjunct starts holding again and `upstream` tracking resumes on its
+# own.
+#
+# `origin` is required either way: with no `origin` remote at all the target is
+# skipped with `no origin remote`, exactly as before this rule existed, rather
+# than falling through to `upstream`. That keeps the gate meaningful, since it
+# exists precisely to protect fork-local commits that live on `origin`.
 #
 # A non-fork install has no `upstream` remote and keeps pulling from `origin`,
 # unchanged. Resolution is per target, so a secondmate home that is a worktree of
-# this repo sees the same remotes and follows the same canonical repo as the
-# primary, while a standalone clone without an `upstream` still follows its own
-# `origin` rather than being skipped.
+# this repo sees the same remotes and reaches the same answer as the primary,
+# while a standalone clone without an `upstream` still follows its own `origin`
+# rather than being skipped.
 #
 # This governs firstmate's OWN checkouts only. Project clones under projects/ are
 # not forks of firstmate and are refreshed from their own origin by
@@ -96,13 +118,6 @@ update_base() {
   local dir=$1 default=$2
   UPDATE_BASE=""
   UPDATE_BASE_ERROR=""
-  if git -C "$dir" remote get-url upstream >/dev/null 2>&1 \
-    && fetch_once "$dir" upstream \
-    && git -C "$dir" rev-parse --verify --quiet "upstream/$default^{commit}" >/dev/null \
-    && git -C "$dir" merge-base --is-ancestor HEAD "upstream/$default" 2>/dev/null; then
-    UPDATE_BASE="upstream/$default"
-    return 0
-  fi
   if ! git -C "$dir" remote get-url origin >/dev/null 2>&1; then
     UPDATE_BASE_ERROR="no origin remote"
     return 1
@@ -112,6 +127,14 @@ update_base() {
     return 1
   fi
   UPDATE_BASE="origin/$default"
+  if git -C "$dir" remote get-url upstream >/dev/null 2>&1 \
+    && fetch_once "$dir" upstream \
+    && git -C "$dir" rev-parse --verify --quiet "upstream/$default^{commit}" >/dev/null \
+    && git -C "$dir" rev-parse --verify --quiet "origin/$default^{commit}" >/dev/null \
+    && git -C "$dir" merge-base --is-ancestor "origin/$default" "upstream/$default" 2>/dev/null \
+    && git -C "$dir" merge-base --is-ancestor HEAD "upstream/$default" 2>/dev/null; then
+    UPDATE_BASE="upstream/$default"
+  fi
 }
 
 # Resolve the PRIMARY checkout's current default-branch commit - the local-HEAD
@@ -325,9 +348,10 @@ live_secondmate_meta_records() {
 #
 # base_mode selects where the fast-forward base comes from:
 #   remote       - fetch this target's update remote (update_base: `upstream` when
-#                  it is an ancestor of HEAD, else `origin`) and advance to
-#                  <remote>/<default> (the /updatefirstmate path); requires that
-#                  remote and network reachability.
+#                  the fork carries nothing of its own and HEAD is an ancestor of
+#                  it, else `origin`) and advance to <remote>/<default> (the
+#                  /updatefirstmate path); requires `origin` and network
+#                  reachability.
 #   <commit-ish> - advance to that LOCAL commit with NO fetch and no remote
 #                  dependency (the local-HEAD secondmate sync). The commit must
 #                  already exist in the target's object store, which it always does

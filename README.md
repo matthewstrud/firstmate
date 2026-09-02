@@ -85,8 +85,9 @@ cd firstmate
 ```
 
 If you work from a fork instead, add the canonical repo as `upstream` (`git remote add upstream https://github.com/kunchenguid/firstmate`).
-`/updatefirstmate` then pulls from `upstream` rather than from your fork whenever `upstream` is an ancestor of your checkout, so an update never quietly delivers whatever your fork was last synced to.
-Once your fork's default branch carries commits the canonical repo lacks, updates fall back to your own `origin`, because these pulls are fast-forward only.
+`/updatefirstmate` then pulls from `upstream` rather than from your fork while your fork carries nothing of its own, so an update never quietly delivers whatever your fork was last synced to.
+Once your fork's default branch carries commits the canonical repo lacks - your own merged PRs, or the merge commits GitHub's "Sync fork" button creates - updates fall back to your own `origin`, because these pulls are fast-forward only and your commits must not be discarded.
+That fallback tracks your fork, which drifts behind the canonical repo whenever you stop syncing it; `upstream` tracking resumes by itself, with nothing to reconfigure, once your fork's default branch stops carrying anything of its own.
 
 Then launch one of the co-primary harnesses; AGENTS.md takes over from there:
 
@@ -179,7 +180,7 @@ Claude and grok use the slash form shown here; codex uses the same names with `$
 | `/afk`             | Enter away-mode supervision: the sub-supervisor self-handles routine notifications in bash, escalates captain-relevant events and bounded declared-external-wait rechecks as batched digests, and actively alerts if delivery gets stuck while you step away |
 | `/ahoy`            | Recap visible session events since the prior real captain message plus visibly unanswered captain decisions, then guide the captain through any open decisions one at a time in agent-judged impact order; fall back to Bearings when invoked as the session's first real captain message |
 | `/bearings`        | Generate a concise four-section chat digest from bounded fleet state, including registered remote-home ledgers; use `/bearings file` to also replace today's dated report in `data/`, and add `include PRs` for live GitHub enrichment |
-| `/updatefirstmate` | Self-update the running firstmate and its secondmates to the latest from each checkout's update remote (`upstream` when it is an ancestor of that checkout, else `origin`) with fast-forward-only pulls, then re-read instructions and nudge secondmates |
+| `/updatefirstmate` | Self-update the running firstmate and its secondmates to the latest from each checkout's update remote (`upstream` when the fork carries nothing of its own, else the fork's own `origin`) with fast-forward-only pulls, then re-read instructions and nudge secondmates |
 | `/stow`            | Sweep the session for uncaptured durable knowledge, persist the open work records this session knows are unfiled or now wrong, curate tiered startup memory with decay and cold archival, enforce each home's budget or surface the required decision, cascade to registered second mates, and report what is safe to reset |
 
 Bearings invocation examples:

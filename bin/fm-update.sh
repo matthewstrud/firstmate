@@ -4,10 +4,11 @@
 #
 # Mechanical half of the /updatefirstmate skill. Fast-forwards the running
 # firstmate repo's default branch from this install's update remote - `upstream`
-# when it is an ancestor of HEAD, otherwise `origin` (bin/fm-ff-lib.sh's
-# update_base owns that rule, why a forked install must not update from its own
-# fork, and why a fork that has moved ahead of upstream quietly keeps following
-# its own origin) - then fast-forwards every registered secondmate home the same way.
+# when the fork carries nothing of its own and HEAD is an ancestor of it,
+# otherwise `origin` (bin/fm-ff-lib.sh's update_base owns that rule, why a forked
+# install must not update from its own fork, and why a fork carrying its own
+# commits quietly keeps following its own origin instead) - then fast-forwards
+# every registered secondmate home the same way.
 # Local homes are treehouse worktrees or standalone
 # clones; remote routes update their configured code root on that host and then
 # fast-forward the persistent home to that root. FAST-FORWARD ONLY, exactly like
@@ -64,9 +65,10 @@ fi
 # --- secondmates -----------------------------------------------------------
 # Secondmate homes are worktrees or standalone clones of this same repo, so they
 # take the same base_mode as the primary and resolve their own update remote
-# per home: a worktree sees the primary's remotes and follows the same canonical
-# repo, while a standalone clone with no `upstream` - or one whose HEAD has moved
-# ahead of upstream - still follows its own origin.
+# per home: a worktree sees the primary's remotes and reaches the same answer,
+# while a standalone clone with no `upstream` still follows its own origin.
+# The rule reads the REMOTES, not each target's HEAD, so homes sharing one remote
+# set cannot split onto different firstmates however far apart their HEADs sit.
 # Diverging here would leave the fleet on a different firstmate than its primary.
 #
 # An updated live secondmate is nudged whenever it advanced (nudge_requires_instr

@@ -6,11 +6,13 @@
 #   - The running firstmate repo (on its default branch) fast-forwards from this
 #     install's update remote; a leased secondmate home (detached HEAD on the
 #     default branch) fast-forwards the same way.
-#   - That update remote is `upstream` when `upstream` is an ancestor of the
-#     checkout and `origin` otherwise, resolved per target: a forked install
+#   - That update remote is `upstream` when the fork carries nothing of its own
+#     AND the checkout is an ancestor of upstream, and `origin` otherwise. The
+#     question is asked of the REMOTES, so every target sharing a remote set
+#     resolves identically however far apart their HEADs sit: a forked install
 #     follows the canonical repo rather than whatever its own fork was last
-#     synced to, an unforked one is unchanged, and a fork that has moved ahead of
-#     the canonical repo quietly keeps following its own origin.
+#     synced to, an unforked one is unchanged, and a fork carrying its own
+#     commits quietly keeps following its own origin and still receives them.
 #   - FAST-FORWARD ONLY: a dirty, diverged, offline, or wrong-branch target is
 #     skipped and reported, never forced or stashed, so unlanded work survives.
 #   - A target that cannot resolve a base at all reports the specific reason, and
@@ -161,6 +163,20 @@ SH
 # How many times <log> records a fetch of <remote>.
 fetch_count() {
   grep -cx "$2" "$1" 2>/dev/null || true
+}
+
+# Advance origin by a commit the canonical repo does not have: a fork-only file
+# plus a distinguishable AGENTS.md, so a target that took upstream instead is
+# visible in the working tree and not only in the SHA. This is the shape of the
+# captain's own merged PR - it lives on the fork's default branch and nowhere else.
+bump_origin_fork_only() {
+  local w=$1
+  git -C "$w/seed" pull -q origin main >/dev/null 2>&1 || true
+  printf 'echo fork-only\n' > "$w/seed/bin/fork-only.sh"
+  printf 'fork-v2\n' > "$w/seed/AGENTS.md"
+  git -C "$w/seed" add -A
+  git -C "$w/seed" commit -qm fork-only
+  git -C "$w/seed" push -q origin main
 }
 
 # Land a fork-local commit on the firstmate checkout, so the checkout carries a
@@ -442,6 +458,10 @@ test_update_remote_resolves_per_target() {
   printf -- '- sm2 - standalone (home: %s; scope: x; projects: p; added 2026-06-23)\n' \
     "$standalone" > "$w/home/data/secondmates.md"
   bump_origin "$w" readme
+  # The primary's fork carries nothing of its own: origin's commit is in upstream
+  # too, so the primary's remotes resolve to upstream while the standalone clone,
+  # which has no upstream remote, still follows its own origin.
+  git -C "$w/seed" push -q "$w/upstream.git" main
   bump_upstream "$w" instr
 
   out=$(run_update "$w")
@@ -494,7 +514,8 @@ test_fork_ahead_of_upstream_falls_back_to_origin() {
   assert_contains "$out" "firstmate: updated " "fork ahead of upstream fast-forwarded from origin"
   assert_not_contains "$out" "firstmate: skipped" "fork ahead of upstream was refused"
   assert_not_contains "$out" "diverged" "quiet origin fallback reported a divergence"
-  assert_not_contains "$(cat "$err")" "firstmate" "quiet origin fallback warned on stderr"
+  assert_not_contains "$(cat "$err")" "firstmate: skipped" "quiet origin fallback reported a skip on stderr"
+  assert_not_contains "$(cat "$err")" "warning:" "quiet origin fallback warned on stderr"
 
   [ "$(git -C "$w/main" rev-parse HEAD)" = "$(bare_head "$w/origin.git")" ] \
     || fail "fork ahead of upstream did not end at its own origin head"
@@ -560,13 +581,149 @@ test_unresolvable_base_reports_a_specific_reason() {
     || fail "HEAD moved despite an unresolvable base"
 
   # The offline case must read differently from the no-remote case.
-  w=$(new_world t18)
+  w=$(new_world t17b)
   git -C "$w/main" remote set-url origin "$w/gone.git"
 
   out=$(run_update "$w")
 
   assert_contains "$out" "firstmate: skipped: fetch failed" "an unreachable remote did not report a fetch failure"
   pass "T17 an unresolvable base reports a specific reason, never a bare skip"
+}
+
+# --- T18: a fork's own merged commits are never stranded --------------------
+# The checkout sits at a commit upstream DOES contain, while the fork's default
+# branch carries the captain's own merged PR. Deciding from HEAD alone would take
+# upstream here and report success forever without ever delivering that commit.
+# The remotes say the fork carries something of its own, so the base is origin.
+test_fork_local_commit_is_delivered_not_stranded() {
+  local w out before
+  w=$(new_world t18)
+  add_upstream "$w" yes
+  bump_upstream "$w" instr
+  bump_origin_fork_only "$w"
+  before=$(git -C "$w/main" rev-parse HEAD)
+
+  # Non-vacuity: this is exactly the latch condition - HEAD IS an ancestor of
+  # upstream, and the two remotes are genuinely diverged.
+  git -C "$w/main" fetch -q origin
+  git -C "$w/main" fetch -q upstream
+  git -C "$w/main" merge-base --is-ancestor HEAD upstream/main \
+    || fail "fixture is vacuous: HEAD is not an ancestor of upstream, so nothing would latch"
+  git -C "$w/main" merge-base --is-ancestor origin/main upstream/main \
+    && fail "fixture is vacuous: the fork carries nothing of its own"
+
+  out=$(run_update "$w")
+
+  assert_contains "$out" "firstmate: updated " "fork with its own commits did not update"
+  assert_not_contains "$out" "firstmate: skipped" "fork with its own commits was refused"
+  [ "$(git -C "$w/main" rev-parse HEAD)" = "$(bare_head "$w/origin.git")" ] \
+    || fail "checkout did not follow the fork that carries its own commits"
+  [ "$(git -C "$w/main" rev-parse HEAD)" != "$(bare_head "$w/upstream.git")" ] \
+    || fail "checkout latched onto upstream and skipped the fork's own commit"
+  [ "$(git -C "$w/main" rev-parse HEAD)" != "$before" ] || fail "HEAD did not move"
+  # Content, not the SHA: the fork-local commit was actually DELIVERED.
+  [ -f "$w/main/bin/fork-only.sh" ] \
+    || fail "the fork's own merged commit was never delivered to the checkout"
+  grep -qx 'fork-v2' "$w/main/AGENTS.md" \
+    || fail "working tree does not hold the fork's AGENTS.md"
+
+  # It stays delivered: a second run must not flip back to upstream.
+  out=$(run_update "$w")
+  assert_contains "$out" "firstmate: already current" "second run was not a no-op"
+  [ -f "$w/main/bin/fork-only.sh" ] \
+    || fail "a later run took the fork's own commit back off the checkout"
+  pass "T18 a fork carrying its own commits receives them instead of latching onto upstream"
+}
+
+# --- T19: targets sharing a remote set never split ---------------------------
+# A primary on a fork-local commit and a worktree home leased at an older,
+# purely-canonical commit share one object store and one set of remotes. Deciding
+# from each HEAD would send the primary to origin and the home to upstream, and
+# they would never re-converge. Both must land on the SAME commit.
+test_targets_sharing_remotes_resolve_the_same_base() {
+  local w out primary_before sm_before
+  w=$(new_world t19)
+  add_upstream "$w" yes
+  # Leased before the fork gained anything of its own, so its HEAD is a commit
+  # upstream contains - the ordinary lease point, not a contrived one.
+  add_sm "$w" sm1
+  bump_upstream "$w" instr
+  bump_origin_fork_only "$w"
+  git -C "$w/main" fetch -q origin
+  git -C "$w/main" merge --ff-only -q origin/main
+  bump_origin "$w" readme
+
+  primary_before=$(git -C "$w/main" rev-parse HEAD)
+  sm_before=$(git -C "$w/sm1" rev-parse HEAD)
+  # Non-vacuity: the two targets start at DIFFERENT commits, and each HEAD would
+  # answer the per-HEAD question differently.
+  [ "$primary_before" != "$sm_before" ] \
+    || fail "fixture is vacuous: both targets already start at the same commit"
+  git -C "$w/main" fetch -q upstream
+  git -C "$w/main" merge-base --is-ancestor "$sm_before" upstream/main \
+    || fail "fixture is vacuous: the leased home is not at a commit upstream contains"
+  git -C "$w/main" merge-base --is-ancestor "$primary_before" upstream/main \
+    && fail "fixture is vacuous: the primary is not on a fork-local commit"
+
+  out=$(run_update "$w")
+
+  assert_contains "$out" "firstmate: updated " "primary did not update"
+  assert_contains "$out" "secondmate sm1: updated " "secondmate did not update"
+  assert_not_contains "$out" "skipped" "a target was refused"
+  [ "$(git -C "$w/main" rev-parse HEAD)" = "$(git -C "$w/sm1" rev-parse HEAD)" ] \
+    || fail "primary and secondmate landed on DIFFERENT commits, so the fleet split"
+  [ "$(git -C "$w/main" rev-parse HEAD)" = "$(bare_head "$w/origin.git")" ] \
+    || fail "targets did not land on the fork that carries its own commits"
+  [ "$(git -C "$w/main" rev-parse HEAD)" != "$(bare_head "$w/upstream.git")" ] \
+    || fail "targets landed on upstream despite the fork carrying its own commits"
+  [ -f "$w/main/bin/fork-only.sh" ] && [ -f "$w/sm1/bin/fork-only.sh" ] \
+    || fail "the fork's own commit is missing from one of the two working trees"
+  pass "T19 targets sharing one remote set land on the same commit, never a split fleet"
+}
+
+# --- T20: upstream tracking resumes on its own ------------------------------
+# The fallback is not a latch in the other direction. The moment the fork's
+# default branch stops carrying anything of its own - here because the commit
+# lands upstream - the gate starts holding again with no configuration change.
+test_upstream_tracking_resumes_once_the_fork_is_clean() {
+  local w out
+  w=$(new_world t20)
+  add_upstream "$w" yes
+  bump_origin_fork_only "$w"
+
+  git -C "$w/main" fetch -q origin
+  git -C "$w/main" fetch -q upstream
+  git -C "$w/main" merge-base --is-ancestor origin/main upstream/main \
+    && fail "fixture is vacuous: the fork carries nothing of its own to begin with"
+
+  out=$(run_update "$w")
+
+  assert_contains "$out" "firstmate: updated " "fork with its own commit did not update from origin"
+  [ "$(git -C "$w/main" rev-parse HEAD)" = "$(bare_head "$w/origin.git")" ] \
+    || fail "phase 1 did not follow the fork"
+  [ -f "$w/main/bin/fork-only.sh" ] || fail "phase 1 did not deliver the fork's own commit"
+
+  # The fork-local commit is upstreamed, then upstream moves on. Nothing is
+  # reconfigured; only the remotes' relationship changed.
+  git -C "$w/seed" push -q "$w/upstream.git" main
+  bump_upstream "$w" instr
+  git -C "$w/main" fetch -q upstream
+  git -C "$w/main" merge-base --is-ancestor origin/main upstream/main \
+    || fail "fixture is vacuous: the fork still carries something of its own in phase 2"
+
+  out=$(run_update "$w")
+
+  assert_contains "$out" "firstmate: updated " "upstream tracking did not resume"
+  assert_not_contains "$out" "firstmate: skipped" "resumed upstream tracking was refused"
+  [ "$(git -C "$w/main" rev-parse HEAD)" = "$(bare_head "$w/upstream.git")" ] \
+    || fail "checkout did not resume following upstream once the fork went clean"
+  [ "$(git -C "$w/main" rev-parse HEAD)" != "$(bare_head "$w/origin.git")" ] \
+    || fail "phase 2 followed origin, so the transition is untested"
+  grep -qx 'upstream-v2' "$w/main/AGENTS.md" \
+    || fail "working tree does not hold upstream's AGENTS.md after the transition"
+  [ -f "$w/main/bin/fork-only.sh" ] \
+    || fail "resuming upstream tracking dropped the previously delivered fork commit"
+  pass "T20 upstream tracking resumes by itself once the fork carries nothing of its own"
 }
 
 test_updates_main_and_secondmate
@@ -584,5 +741,8 @@ test_update_remote_resolves_per_target
 test_fork_ahead_of_upstream_falls_back_to_origin
 test_fetch_deduped_across_targets_sharing_an_object_store
 test_unresolvable_base_reports_a_specific_reason
+test_fork_local_commit_is_delivered_not_stranded
+test_targets_sharing_remotes_resolve_the_same_base
+test_upstream_tracking_resumes_once_the_fork_is_clean
 
 echo "# all fm-update tests passed"
