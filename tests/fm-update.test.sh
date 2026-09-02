@@ -13,6 +13,8 @@
 #     the canonical repo quietly keeps following its own origin.
 #   - FAST-FORWARD ONLY: a dirty, diverged, offline, or wrong-branch target is
 #     skipped and reported, never forced or stashed, so unlanded work survives.
+#   - A target that cannot resolve a base at all reports the specific reason, and
+#     one fetch per remote serves every target sharing an object store.
 #   - The update is a single-parent fast-forward (never a merge commit) and a
 #     fast-forward of one worktree never disturbs another worktree's checkout
 #     or the shared default branch.
@@ -132,6 +134,42 @@ bare_head() {
 run_update() {
   local w=$1
   FM_ROOT_OVERRIDE="$w/main" FM_HOME="$w/home" "$UPDATE" 2>/dev/null
+}
+
+# A `git` shim that records the remote of every `git fetch <remote>` before
+# handing the call straight to the real git, so one run's fetches can be counted
+# per remote through an observable side effect rather than by reading source.
+install_fetch_counting_git() {
+  local fakebin=$1 log=$2 real_git
+  real_git=$(command -v git)
+  cat > "$fakebin/git" <<SH
+#!/usr/bin/env bash
+set -eu
+prev=""
+for arg in "\$@"; do
+  if [ "\$prev" = fetch ]; then
+    printf '%s\n' "\$arg" >> '$log'
+    break
+  fi
+  prev="\$arg"
+done
+exec '$real_git' "\$@"
+SH
+  chmod +x "$fakebin/git"
+}
+
+# How many times <log> records a fetch of <remote>.
+fetch_count() {
+  grep -cx "$2" "$1" 2>/dev/null || true
+}
+
+# Land a fork-local commit on the firstmate checkout, so the checkout carries a
+# commit the canonical repo lacks and its update falls back to its own origin.
+land_fork_local_commit() {
+  local w=$1
+  bump_origin "$w" readme
+  git -C "$w/main" fetch -q origin
+  git -C "$w/main" merge --ff-only -q origin/main
 }
 
 # --- T1: main + secondmate behind, instruction change; FF, not a merge ------
@@ -469,6 +507,68 @@ test_fork_ahead_of_upstream_falls_back_to_origin() {
   pass "T15 a fork ahead of upstream updates from origin without refusing"
 }
 
+# --- T16: one fetch per remote serves every target sharing an object store --
+# A linked-worktree secondmate shares the primary's object store, so a single
+# fetch already refreshes it. The fork-local commit makes BOTH remotes get
+# consulted in the same run - upstream for the ancestry test, origin as the base -
+# so this pins the dedup key as (remote, object store), not just "fetched once".
+test_fetch_deduped_across_targets_sharing_an_object_store() {
+  local w out fakebin log
+  w=$(new_world t16)
+  add_upstream "$w" yes
+  land_fork_local_commit "$w"
+  add_sm "$w" sm1
+  bump_upstream "$w" instr
+  bump_origin "$w" instr
+
+  fakebin=$(fm_fakebin "$w")
+  log="$w/fetches.log"
+  : > "$log"
+  install_fetch_counting_git "$fakebin" "$log"
+
+  out=$(PATH="$fakebin:$PATH" FM_ROOT_OVERRIDE="$w/main" FM_HOME="$w/home" "$UPDATE" 2>/dev/null)
+
+  assert_contains "$out" "firstmate: updated " "primary did not update"
+  assert_contains "$out" "secondmate sm1: updated " "worktree secondmate did not update"
+  [ "$(fetch_count "$log" upstream)" -eq 1 ] \
+    || fail "upstream fetched $(fetch_count "$log" upstream) times for 2 targets sharing an object store, expected 1"
+  [ "$(fetch_count "$log" origin)" -eq 1 ] \
+    || fail "origin fetched $(fetch_count "$log" origin) times for 2 targets sharing an object store, expected 1"
+  pass "T16 one fetch per remote serves every target sharing an object store"
+}
+
+# --- T17: a target that cannot resolve a base reports WHY -------------------
+# The skip reason is the only diagnostic a captain gets when /updatefirstmate
+# cannot reach a base, so the no-remote and the offline cases must stay
+# distinguishable instead of collapsing into a bare `skipped: `.
+test_unresolvable_base_reports_a_specific_reason() {
+  local w out before
+  w=$(new_world t17)
+  add_upstream "$w" yes
+  land_fork_local_commit "$w"
+  bump_upstream "$w" instr
+  # Upstream is unusable as a base (the checkout carries what it lacks) and the
+  # fallback remote is gone, so no base can be resolved at all.
+  git -C "$w/main" remote remove origin
+  before=$(git -C "$w/main" rev-parse HEAD)
+
+  out=$(run_update "$w")
+
+  assert_contains "$out" "firstmate: skipped: no origin remote" "missing fallback remote did not report its own reason"
+  assert_contains "$out" "reread-firstmate: no" "no reread when the base was unresolvable"
+  [ "$(git -C "$w/main" rev-parse HEAD)" = "$before" ] \
+    || fail "HEAD moved despite an unresolvable base"
+
+  # The offline case must read differently from the no-remote case.
+  w=$(new_world t18)
+  git -C "$w/main" remote set-url origin "$w/gone.git"
+
+  out=$(run_update "$w")
+
+  assert_contains "$out" "firstmate: skipped: fetch failed" "an unreachable remote did not report a fetch failure"
+  pass "T17 an unresolvable base reports a specific reason, never a bare skip"
+}
+
 test_updates_main_and_secondmate
 test_reread_gate_is_instruction_only
 test_dirty_secondmate_skipped
@@ -482,5 +582,7 @@ test_fork_updates_from_upstream
 test_origin_only_install_updates_from_origin
 test_update_remote_resolves_per_target
 test_fork_ahead_of_upstream_falls_back_to_origin
+test_fetch_deduped_across_targets_sharing_an_object_store
+test_unresolvable_base_reports_a_specific_reason
 
 echo "# all fm-update tests passed"

@@ -51,10 +51,14 @@ default_branch() {
   return 1
 }
 
-# The base ref this install pulls its UPDATES from, echoed for the caller as
-# <remote>/<default>. Fetches whichever remotes it consults, so the caller must
-# not fetch again. Returns 1 and sets UPDATE_BASE_ERROR when no usable base
-# exists.
+# Resolve the base ref this install pulls its UPDATES from. Sets UPDATE_BASE to
+# <remote>/<default> and returns 0, or sets UPDATE_BASE_ERROR to a specific
+# reason and returns 1 when no usable base exists. Both are globals, like
+# ff_target's FF_STATUS/FF_INSTR and validate_secondmate_home's VALIDATED_HOME:
+# the caller must invoke this as a plain command, NEVER through a command
+# substitution, because the fetch dedup accumulator FETCHED and these outputs
+# all die with a subshell. Fetches whichever remotes it consults, so the caller
+# must not fetch again.
 #
 # firstmate is a shared template, so the expected topology for a real install is
 # a fork: `origin` is the user's own fork - their push target, where their PRs go -
@@ -86,15 +90,17 @@ default_branch() {
 # not forks of firstmate and are refreshed from their own origin by
 # bin/fm-fleet-sync.sh, which has its own fast-forward implementation and never
 # reaches this library.
+UPDATE_BASE=""
 UPDATE_BASE_ERROR=""
 update_base() {
   local dir=$1 default=$2
+  UPDATE_BASE=""
   UPDATE_BASE_ERROR=""
   if git -C "$dir" remote get-url upstream >/dev/null 2>&1 \
     && fetch_once "$dir" upstream \
     && git -C "$dir" rev-parse --verify --quiet "upstream/$default^{commit}" >/dev/null \
     && git -C "$dir" merge-base --is-ancestor HEAD "upstream/$default" 2>/dev/null; then
-    echo "upstream/$default"
+    UPDATE_BASE="upstream/$default"
     return 0
   fi
   if ! git -C "$dir" remote get-url origin >/dev/null 2>&1; then
@@ -105,7 +111,7 @@ update_base() {
     UPDATE_BASE_ERROR="fetch failed"
     return 1
   fi
-  echo "origin/$default"
+  UPDATE_BASE="origin/$default"
 }
 
 # Resolve the PRIMARY checkout's current default-branch commit - the local-HEAD
@@ -353,10 +359,11 @@ ff_target() {
 
   # Resolve the fast-forward base from base_mode (see header).
   if [ "$base_mode" = remote ]; then
-    if ! base=$(update_base "$dir" "$default"); then
+    if ! update_base "$dir" "$default"; then
       echo "$label: skipped: $UPDATE_BASE_ERROR"
       return 0
     fi
+    base="$UPDATE_BASE"
   else
     base="$base_mode"
   fi
