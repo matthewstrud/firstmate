@@ -1,0 +1,22 @@
+TOPOLOGY
+  origin   = the user's fork      d2bcda8  (their push target)
+  upstream = the canonical repo   4a3922a
+  the fork is 8 commits behind upstream (nobody pressed GitHub's 'Sync fork')
+  install HEAD before update: d2bcda8  AGENTS.md = firstmate v1
+
+=== BEFORE the change: $ /tmp/fm-prechange.SgOR8G/bin/fm-update.sh ===
+firstmate: already current
+reread-firstmate: no
+nudge-secondmates: none
+  exit status: 0
+  install HEAD now: d2bcda8   AGENTS.md = firstmate v1   bin/tool.sh = echo v1
+  => STALE: still 8 commits behind canonical firstmate
+
+=== AFTER the change: $ /home/mosaic/.no-mistakes/worktrees/cab7c281f0e7/01M1H36FN3TB835HP9MWDPVEAZ/bin/fm-update.sh ===
+firstmate: updated d2bcda8..4a3922a (instructions changed: AGENTS.md, bin)
+reread-firstmate: yes
+nudge-secondmates: none
+  exit status: 0
+  install HEAD now: 4a3922a   AGENTS.md = firstmate v9   bin/tool.sh = echo v9
+  => at the CANONICAL head
+

@@ -1,0 +1,30 @@
+Each new fm-update test run in isolation against an unmodified export of the base
+commit (0399b016, pre-change) and against the branch head (739398e, post-change).
+
+test                                                           | PRE-CHANGE | POST-CHANGE
+---------------------------------------------------------------+------------+------------
+T12 test_fork_updates_from_upstream                            | FAIL       | PASS
+T13 test_origin_only_install_updates_from_origin               | PASS       | PASS   (unchanged-behaviour guard)
+T14 test_update_remote_resolves_per_target                     | FAIL       | PASS
+T15 test_fork_ahead_of_upstream_falls_back_to_origin           | PASS       | PASS
+T16 test_fetch_deduped_across_targets_sharing_an_object_store  | FAIL       | PASS
+T17 test_unresolvable_base_reports_a_specific_reason           | PASS       | PASS
+T18 test_fork_local_commit_is_delivered_not_stranded           | PASS       | PASS
+T19 test_targets_sharing_remotes_resolve_the_same_base         | PASS       | PASS
+T20 test_upstream_tracking_resumes_once_the_fork_is_clean      | FAIL       | PASS
+
+T12 failure output against the pre-change code (the defect being fixed - silent
+success while delivering stale code):
+
+  not ok - firstmate fast-forwarded from upstream (missing: 'firstmate: updated ')
+  --- output ---
+  firstmate: already current
+  secondmate sm1: already current
+  reread-firstmate: no
+  nudge-secondmates: none
+
+fm-fleet-sync leak guard, demonstrated able to fail. Unmodified branch head:
+  ok - project clone syncs from its own origin, never from an upstream remote
+Same test with bin/fm-fleet-sync.sh perturbed (in a throwaway export) to prefer an
+`upstream` remote for project clones:
+  not ok - project clone with an upstream remote still syncs (missing: 'upsilon: synced')

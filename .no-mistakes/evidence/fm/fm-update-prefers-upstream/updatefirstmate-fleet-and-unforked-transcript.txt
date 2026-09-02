@@ -1,0 +1,20 @@
+############ (a) forked install + one live secondmate home ############
+  fork(origin)=a0acddc  canonical(upstream)=80c0c7b  fork is 1 behind
+$ bin/fm-update.sh
+firstmate: updated a0acddc..80c0c7b (instructions changed: AGENTS.md, bin)
+secondmate sm1: updated a0acddc..80c0c7b (instructions changed: AGENTS.md, bin)
+reread-firstmate: yes
+nudge-secondmates: fm-sm1
+  primary   AGENTS.md = firstmate v2
+  secondmate AGENTS.md = firstmate v2
+  primary and secondmate on the same commit: yes
+  both at canonical head: yes
+
+############ (b) install with NO upstream remote - unchanged behaviour ############
+  remotes: origin 
+$ bin/fm-update.sh
+firstmate: updated a0acddc..721679d (instructions changed: AGENTS.md)
+reread-firstmate: yes
+nudge-secondmates: none
+  AGENTS.md = my fork v2  (its own origin's content, not the unwired canonical repo's)
+  at own origin head: yes
