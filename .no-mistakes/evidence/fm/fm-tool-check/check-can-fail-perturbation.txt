@@ -1,0 +1,33 @@
+=== Perturbation 1: propagate the version probe's exit code instead of discarding it ===
+--- patch ---
+@@ -91 +91 @@ tool_version_line() {
+-  [ "$rc" -eq 0 ] || return 0
++  [ "$rc" -eq 0 ] || return 1
+@@ -116 +116 @@ for tool in "$@"; do
+-  version=$(tool_version_line "$path")
++  version=$(tool_version_line "$path") || { printf "missing: %s\n" "$tool"; missing=1; continue; }
+--- test result ---
+ok - a tool that exists and reports a version is reported on one exact line with its resolved path
+ok - a version printed to stderr is captured into the report
+ok - a tool that is not on PATH is reported missing and exits 1
+not ok - a tool whose --version exits nonzero is still present, so the exit must be 0: expected exit 0, got 1
+test exit=
+--- reverted; worktree clean: 0 modified files ---
+
+=== Perturbation 2: resolve with `command -v` so a shell builtin can shadow the real file ===
+--- patch ---
+@@ -103 +103 @@ for tool in "$@"; do
+-  path=$(type -P -- "$tool" 2>/dev/null) || path=
++  path=$(command -v -- "$tool" 2>/dev/null) || path=
+--- what the user would see ---
+found: echo path=echo version=--version
+found: pwd path=pwd version=unavailable
+found: git path=/usr/bin/git version=git version 2.34.1
+--- test result ---
+ok - a hung --version hits the probe bound and is reported found with version=unavailable
+not ok - a PATH executable must win over a same-named shell builtin: found: echo path=echo version=--version
+found: printf path=printf version=unavailable
+--- reverted; modified files in worktree: 0 ---
+--- test result after revert ---
+ok - an out-of-range FM_TOOL_CHECK_PROBE_SECS (0 and 31) is rejected before any probe runs
+# fm-tool-check.test.sh: all assertions passed

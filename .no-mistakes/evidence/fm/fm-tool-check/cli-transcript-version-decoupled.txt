@@ -1,0 +1,26 @@
+# Central correctness property: a tool that is present but has no usable --version
+# must be reported FOUND with version=unavailable, never as missing.
+
+$ ssh --version   # what the real tool itself does
+unknown option -- -
+exit=255
+$ dash --version
+dash: 0: Illegal option --
+exit=2
+
+$ bin/fm-tool-check.sh ssh dash git
+found: ssh path=/usr/bin/ssh version=unavailable
+found: dash path=/usr/bin/dash version=unavailable
+found: git path=/usr/bin/git version=git version 2.34.1
+exit=0
+
+# A hung --version cannot hang the check: it is bounded by FM_TOOL_CHECK_PROBE_SECS.
+$ FM_TOOL_CHECK_PROBE_SECS=2 PATH=<fakebin>:$PATH bin/fm-tool-check.sh hangs-forever git
+found: hangs-forever path=<fakebin>/hangs-forever version=unavailable
+found: git path=/usr/bin/git version=git version 2.34.1
+exit=0  wall=2s  (hangs-forever sleeps 600s)
+
+# The probe is fed /dev/null on stdin, so a tool that reads stdin returns instead of blocking.
+$ PATH=<fakebin>:$PATH bin/fm-tool-check.sh reads-stdin
+found: reads-stdin path=<fakebin>/reads-stdin version=reads-stdin 1.0
+exit=0

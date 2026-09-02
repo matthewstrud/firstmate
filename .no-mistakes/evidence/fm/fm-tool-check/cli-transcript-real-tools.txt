@@ -1,0 +1,55 @@
+$ bin/fm-tool-check.sh git bash jq python3
+found: git path=/usr/bin/git version=git version 2.34.1
+found: bash path=/usr/bin/bash version=GNU bash, version 5.1.16(1)-release (x86_64-pc-linux-gnu)
+found: jq path=/usr/bin/jq version=jq-1.6
+found: python3 path=/usr/bin/python3 version=Python 3.10.12
+exit=0
+
+$ bin/fm-tool-check.sh git definitely-not-installed node
+found: git path=/usr/bin/git version=git version 2.34.1
+missing: definitely-not-installed
+found: node path=/home/mosaic/.nvm/versions/node/v24.12.0/bin/node version=v24.12.0
+exit=1
+
+$ bin/fm-tool-check.sh echo printf pwd    # real files, not the shell builtins
+found: echo path=/usr/bin/echo version=echo (GNU coreutils) 8.32
+found: printf path=/usr/bin/printf version=printf (GNU coreutils) 8.32
+found: pwd path=/usr/bin/pwd version=pwd (GNU coreutils) 8.32
+exit=0
+
+$ bin/fm-tool-check.sh shopt declare      # exist only inside the shell
+found: shopt not-a-file
+found: declare not-a-file
+exit=0
+
+$ bin/fm-tool-check.sh --help
+usage: fm-tool-check.sh <tool> [<tool>...]
+
+One-shot presence report for the named tools, one line each in argument order
+(not fm-tool-update-check.sh, which polls watched tools for available updates):
+  found: <tool> path=<resolved path> version=<first line of --version>
+  found: <tool> path=<resolved path> version=unavailable
+  found: <tool> not-a-file   a builtin or keyword with no executable of that
+                             name on PATH, so no path or version is claimed
+  missing: <tool>
+
+Exits 0 when every named tool resolves, 1 when any does not, 2 on a usage error.
+exit=0
+
+$ bin/fm-tool-check.sh                    # no arguments
+usage: fm-tool-check.sh <tool> [<tool>...]
+
+One-shot presence report for the named tools, one line each in argument order
+(not fm-tool-update-check.sh, which polls watched tools for available updates):
+  found: <tool> path=<resolved path> version=<first line of --version>
+  found: <tool> path=<resolved path> version=unavailable
+  found: <tool> not-a-file   a builtin or keyword with no executable of that
+                             name on PATH, so no path or version is claimed
+  missing: <tool>
+
+Exits 0 when every named tool resolves, 1 when any does not, 2 on a usage error.
+exit=2
+
+$ FM_TOOL_CHECK_PROBE_SECS=99 bin/fm-tool-check.sh git
+error: FM_TOOL_CHECK_PROBE_SECS must be an integer between 1 and 30, got: 99
+exit=2
