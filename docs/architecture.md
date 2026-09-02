@@ -376,8 +376,10 @@ The refresh also prunes local branches whose remote is gone and that no worktree
 ## Self-updates stay safe
 
 `/updatefirstmate` fast-forwards the running firstmate repo and registered secondmate homes from each checkout's update remote, then re-reads updated instructions and nudges updated secondmates without touching project clones.
-That remote is `upstream` when the checkout defines it and `origin` otherwise, so a forked install follows the canonical repo instead of whatever its own fork was last synced to; project clones are not forks of firstmate and keep syncing from their own `origin` through a separate implementation.
-For a remote route, the configured code root updates from its own origin on that host before the persistent home fast-forwards to the code-root commit.
+That remote is `upstream` when `upstream` is an ancestor of the checkout and `origin` otherwise, so a forked install follows the canonical repo instead of whatever its own fork was last synced to.
+The ancestry decides rather than the presence of the remote, because these pulls are fast-forward only: a fork whose default branch has moved ahead of the canonical repo quietly keeps following its own `origin` and still reports an ordinary update.
+Project clones are not forks of firstmate and keep syncing from their own `origin` through a separate implementation.
+For a remote route, the configured code root updates from that checkout's own update remote on that host before the persistent home fast-forwards to the code-root commit.
 The update is fast-forward only: dirty, diverged, offline, and off-default targets are reported and left untouched.
 Local homes share the guarded fast-forward helper, while remote updates delegate the same safety decision to the configured host through the generic transport.
 The mechanics are owned by the `/updatefirstmate` skill and firstmate's operating manual in [`AGENTS.md`](../AGENTS.md) (self-update).

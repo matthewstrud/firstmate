@@ -1,7 +1,7 @@
 ---
 name: updatefirstmate
 description: >-
-  Self-update a running firstmate and its secondmates to the latest canonical firstmate.
+  Self-update a running firstmate and its secondmates to the latest from each checkout's update remote - the canonical `upstream` whenever a fast-forward from it is possible, else `origin`.
   Use when the captain invokes /updatefirstmate (e.g. "/updatefirstmate", "update firstmate", "pull the latest firstmate").
   Fast-forwards this firstmate repo's default branch and every local or remote secondmate through its guarded update path (never forced, never disruptive), then re-reads AGENTS.md and nudges each updated secondmate to do the same, so the whole tree runs the latest bin/ and instructions.
 user-invocable: true
@@ -18,8 +18,10 @@ This skill performs that pull for the running main firstmate and every secondmat
 
 The pull comes from **the canonical firstmate repo, not the user's own fork**.
 Firstmate is a shared template, so a real install is usually a fork: `origin` is the user's fork - their push target, where their PRs go - and `upstream` is the canonical repo.
-Updating such an install from `origin` would deliver whatever that fork was last synced to and still report success, so each checkout fast-forwards from `upstream` whenever it defines that remote and from `origin` otherwise.
+Updating such an install from `origin` would deliver whatever that fork was last synced to and still report success, so each checkout fast-forwards from `upstream` whenever `upstream` is an ancestor of its HEAD, and from `origin` otherwise.
 That resolution is per checkout and needs no configuration, because `upstream` already means "the canonical repo I forked" by universal git convention.
+The ancestry decides, not the mere presence of the remote: every pull here is fast-forward only, so a fork whose default branch carries commits the canonical repo lacks - its own merged PRs, or the merge commits GitHub's "Sync fork" button creates - could never fast-forward from `upstream` at all.
+Such a fork quietly falls back to its own `origin` and still reports an ordinary `updated` or `already current`, never a skip.
 An install with no `upstream` remote keeps pulling from `origin` exactly as before.
 
 The update is **fast-forward only** - the same sanctioned self-write as the fleet sync firstmate already runs.

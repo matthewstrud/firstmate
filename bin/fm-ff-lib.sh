@@ -6,7 +6,7 @@
 # clean fast-forward, never forcing, merging, or stashing" used by every sync
 # path:
 #   - /updatefirstmate (bin/fm-update.sh) pulls from this install's update remote:
-#     base_mode "remote". See update_remote for which remote that is.
+#     base_mode "remote". See update_base for which remote that is.
 #   - the local-HEAD secondmate sync (bin/fm-spawn.sh on launch, bin/fm-bootstrap.sh
 #     on startup) follows the PRIMARY checkout's current default-branch commit:
 #     base_mode is that local commit, with NO fetch and no remote dependency.
@@ -51,16 +51,30 @@ default_branch() {
   return 1
 }
 
-# The remote this install pulls its UPDATES from, echoed for the caller.
+# The base ref this install pulls its UPDATES from, echoed for the caller as
+# <remote>/<default>. Fetches whichever remotes it consults, so the caller must
+# not fetch again. Returns 1 and sets UPDATE_BASE_ERROR when no usable base
+# exists.
 #
 # firstmate is a shared template, so the expected topology for a real install is
 # a fork: `origin` is the user's own fork - their push target, where their PRs go -
 # and `upstream` is the canonical repo. Fast-forwarding such an install from
 # `origin` delivers whatever that fork happens to have been synced to, which is
 # stale code reported as a successful update unless the user remembers to press
-# GitHub's "Sync fork" first. So prefer `upstream` whenever the repo defines it:
-# that remote name already means "the canonical repo I forked" by universal git
-# convention, which is why this needs no configuration of its own.
+# GitHub's "Sync fork" first. So prefer `upstream`: that remote name already
+# means "the canonical repo I forked" by universal git convention, which is why
+# this needs no configuration of its own.
+#
+# The rule is `upstream` when it is an ancestor of HEAD, else `origin` - the
+# ancestry decides, not the mere presence of the remote. Every sync path here is
+# fast-forward-only, so an `upstream` that HEAD has moved beyond can never be a
+# base: a fork carrying commits the canonical repo lacks (its own merged PRs, or
+# the merge commits GitHub's "Sync fork" button itself creates) would be refused
+# forever. That fork falls back to `origin` QUIETLY: it is an ordinary successful
+# update from the user's own fork, not a skip, so the run still reports
+# `updated`/`already current`. A `upstream/<default>` that is missing or cannot
+# be fetched is treated the same way. A checkout already at upstream's head still
+# resolves to `upstream`, since a commit is its own ancestor.
 #
 # A non-fork install has no `upstream` remote and keeps pulling from `origin`,
 # unchanged. Resolution is per target, so a secondmate home that is a worktree of
@@ -72,13 +86,26 @@ default_branch() {
 # not forks of firstmate and are refreshed from their own origin by
 # bin/fm-fleet-sync.sh, which has its own fast-forward implementation and never
 # reaches this library.
-update_remote() {
-  local dir=$1
-  if git -C "$dir" remote get-url upstream >/dev/null 2>&1; then
-    echo upstream
-  else
-    echo origin
+UPDATE_BASE_ERROR=""
+update_base() {
+  local dir=$1 default=$2
+  UPDATE_BASE_ERROR=""
+  if git -C "$dir" remote get-url upstream >/dev/null 2>&1 \
+    && fetch_once "$dir" upstream \
+    && git -C "$dir" rev-parse --verify --quiet "upstream/$default^{commit}" >/dev/null \
+    && git -C "$dir" merge-base --is-ancestor HEAD "upstream/$default" 2>/dev/null; then
+    echo "upstream/$default"
+    return 0
   fi
+  if ! git -C "$dir" remote get-url origin >/dev/null 2>&1; then
+    UPDATE_BASE_ERROR="no origin remote"
+    return 1
+  fi
+  if ! fetch_once "$dir" origin; then
+    UPDATE_BASE_ERROR="fetch failed"
+    return 1
+  fi
+  echo "origin/$default"
 }
 
 # Resolve the PRIMARY checkout's current default-branch commit - the local-HEAD
@@ -291,8 +318,8 @@ live_secondmate_meta_records() {
 #   FF_INSTR  = comma list of changed instruction paths (only when updated)
 #
 # base_mode selects where the fast-forward base comes from:
-#   remote       - fetch this target's update remote (update_remote: `upstream` when
-#                  the target defines it, else `origin`) and advance to
+#   remote       - fetch this target's update remote (update_base: `upstream` when
+#                  it is an ancestor of HEAD, else `origin`) and advance to
 #                  <remote>/<default> (the /updatefirstmate path); requires that
 #                  remote and network reachability.
 #   <commit-ish> - advance to that LOCAL commit with NO fetch and no remote
@@ -318,7 +345,7 @@ ff_target() {
     return 0
   fi
 
-  local default base cur instr local_rev base_rev before after out remote
+  local default base cur instr local_rev base_rev before after out
   default=$(default_branch "$dir") || {
     echo "$label: skipped: cannot determine default branch"
     return 0
@@ -326,16 +353,10 @@ ff_target() {
 
   # Resolve the fast-forward base from base_mode (see header).
   if [ "$base_mode" = remote ]; then
-    remote=$(update_remote "$dir")
-    if ! git -C "$dir" remote get-url "$remote" >/dev/null 2>&1; then
-      echo "$label: skipped: no $remote remote"
+    if ! base=$(update_base "$dir" "$default"); then
+      echo "$label: skipped: $UPDATE_BASE_ERROR"
       return 0
     fi
-    if ! fetch_once "$dir" "$remote"; then
-      echo "$label: skipped: fetch failed"
-      return 0
-    fi
-    base="$remote/$default"
   else
     base="$base_mode"
   fi

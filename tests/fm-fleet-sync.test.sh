@@ -19,8 +19,8 @@
 # single-project forms, while a symlinked clone dir still syncs.
 #
 # It also pins the boundary against firstmate's own self-update rule: firstmate
-# self-updates from `upstream` when its checkout defines that remote (see
-# bin/fm-ff-lib.sh's update_remote), but a project clone is NOT a fork of
+# self-updates from `upstream` when `upstream` is an ancestor of its checkout
+# (see bin/fm-ff-lib.sh's update_base), but a project clone is NOT a fork of
 # firstmate, so a project's own `upstream` remote must never become its sync base.
 #
 # It also pins the orphaned .git/packed-refs.lock recovery in the fetch step

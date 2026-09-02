@@ -6,10 +6,11 @@
 #   - The running firstmate repo (on its default branch) fast-forwards from this
 #     install's update remote; a leased secondmate home (detached HEAD on the
 #     default branch) fast-forwards the same way.
-#   - That update remote is `upstream` when the checkout defines one and `origin`
-#     otherwise, resolved per target: a forked install follows the canonical repo
-#     rather than whatever its own fork was last synced to, and an unforked one
-#     is unchanged.
+#   - That update remote is `upstream` when `upstream` is an ancestor of the
+#     checkout and `origin` otherwise, resolved per target: a forked install
+#     follows the canonical repo rather than whatever its own fork was last
+#     synced to, an unforked one is unchanged, and a fork that has moved ahead of
+#     the canonical repo quietly keeps following its own origin.
 #   - FAST-FORWARD ONLY: a dirty, diverged, offline, or wrong-branch target is
 #     skipped and reported, never forced or stashed, so unlanded work survives.
 #   - The update is a single-parent fast-forward (never a merge commit) and a
@@ -418,6 +419,56 @@ test_update_remote_resolves_per_target() {
   pass "T14 each target resolves its own update remote"
 }
 
+# --- T15: a fork ahead of upstream falls back to origin, quietly ------------
+# The topology every long-lived fork reaches: its default branch carries commits
+# the canonical repo lacks - its own merged PRs, or the merge commits GitHub's
+# "Sync fork" button creates - while upstream has advanced too. These pulls are
+# fast-forward only, so `upstream` can never be a base for such a checkout. It
+# must fall back to its own origin as an ordinary successful update, not refuse
+# with `skipped: diverged from upstream/main` forever.
+test_fork_ahead_of_upstream_falls_back_to_origin() {
+  local w out err fork_local
+  w=$(new_world t15)
+  add_upstream "$w" yes
+
+  # A fork-local commit that upstream will never see, landed on the checkout.
+  bump_origin "$w" readme
+  git -C "$w/main" fetch -q origin
+  git -C "$w/main" merge --ff-only -q origin/main
+  fork_local=$(git -C "$w/main" rev-parse HEAD)
+
+  # Both sides then advance independently, so origin and upstream truly diverge.
+  bump_upstream "$w" instr
+  bump_origin "$w" instr
+
+  # Non-vacuity: the fork-local commit is genuinely absent from upstream, and
+  # upstream is genuinely ahead of the merge base rather than behind it.
+  git -C "$w/main" fetch -q upstream
+  git -C "$w/main" merge-base --is-ancestor "$fork_local" upstream/main \
+    && fail "fixture is vacuous: the fork-local commit is already in upstream"
+  [ "$(git -C "$w/main" rev-parse upstream/main)" \
+    != "$(git -C "$w/main" merge-base HEAD upstream/main)" ] \
+    || fail "fixture is vacuous: upstream is not ahead of the merge base"
+
+  err="$w/t15.stderr"
+  out=$(FM_ROOT_OVERRIDE="$w/main" FM_HOME="$w/home" "$UPDATE" 2>"$err")
+
+  assert_contains "$out" "firstmate: updated " "fork ahead of upstream fast-forwarded from origin"
+  assert_not_contains "$out" "firstmate: skipped" "fork ahead of upstream was refused"
+  assert_not_contains "$out" "diverged" "quiet origin fallback reported a divergence"
+  assert_not_contains "$(cat "$err")" "firstmate" "quiet origin fallback warned on stderr"
+
+  [ "$(git -C "$w/main" rev-parse HEAD)" = "$(bare_head "$w/origin.git")" ] \
+    || fail "fork ahead of upstream did not end at its own origin head"
+  [ "$(git -C "$w/main" rev-parse HEAD)" != "$(bare_head "$w/upstream.git")" ] \
+    || fail "fork ahead of upstream ended at upstream head"
+  git -C "$w/main" merge-base --is-ancestor "$fork_local" HEAD \
+    || fail "the fork-local commit was dropped from the resulting history"
+  grep -qx 'v2' "$w/main/AGENTS.md" \
+    || fail "working tree does not hold origin's AGENTS.md"
+  pass "T15 a fork ahead of upstream updates from origin without refusing"
+}
+
 test_updates_main_and_secondmate
 test_reread_gate_is_instruction_only
 test_dirty_secondmate_skipped
@@ -430,5 +481,6 @@ test_unsafe_secondmate_home_skipped_before_git_update
 test_fork_updates_from_upstream
 test_origin_only_install_updates_from_origin
 test_update_remote_resolves_per_target
+test_fork_ahead_of_upstream_falls_back_to_origin
 
 echo "# all fm-update tests passed"
