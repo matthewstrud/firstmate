@@ -85,8 +85,8 @@ cd firstmate
 ```
 
 If you work from a fork instead, add the canonical repo as `upstream` (`git remote add upstream https://github.com/kunchenguid/firstmate`).
-`/updatefirstmate` then pulls from `upstream` rather than from your fork, so an update never quietly delivers whatever your fork was last synced to; nothing else needs configuring, and a fork carrying commits of its own keeps following that fork instead.
-Exactly when each remote is chosen, and what the fork fallback does and does not promise, is in [docs/architecture.md](docs/architecture.md#self-updates-stay-safe).
+`/updatefirstmate` then pulls from `upstream` rather than from your fork, so an update never quietly delivers whatever your fork was last synced to, and nothing else needs configuring.
+Exactly when each remote is chosen, and what the fork fallback does and does not promise, is owned by the [`updatefirstmate` skill](.agents/skills/updatefirstmate/SKILL.md).
 
 Then launch one of the co-primary harnesses; AGENTS.md takes over from there:
 
@@ -179,7 +179,7 @@ Claude and grok use the slash form shown here; codex uses the same names with `$
 | `/afk`             | Enter away-mode supervision: the sub-supervisor self-handles routine notifications in bash, escalates captain-relevant events and bounded declared-external-wait rechecks as batched digests, and actively alerts if delivery gets stuck while you step away |
 | `/ahoy`            | Recap visible session events since the prior real captain message plus visibly unanswered captain decisions, then guide the captain through any open decisions one at a time in agent-judged impact order; fall back to Bearings when invoked as the session's first real captain message |
 | `/bearings`        | Generate a concise four-section chat digest from bounded fleet state, including registered remote-home ledgers; use `/bearings file` to also replace today's dated report in `data/`, and add `include PRs` for live GitHub enrichment |
-| `/updatefirstmate` | Self-update the running firstmate and its secondmates to the latest from each checkout's update remote (`upstream` when the fork carries nothing of its own, else the fork's own `origin`) with fast-forward-only pulls, then re-read instructions and nudge secondmates |
+| `/updatefirstmate` | Self-update the running firstmate and its secondmates to the latest from each checkout's own update remote with fast-forward-only pulls, then re-read instructions and nudge secondmates |
 | `/stow`            | Sweep the session for uncaptured durable knowledge, persist the open work records this session knows are unfiled or now wrong, curate tiered startup memory with decay and cold archival, enforce each home's budget or surface the required decision, cascade to registered second mates, and report what is safe to reset |
 
 Bearings invocation examples:

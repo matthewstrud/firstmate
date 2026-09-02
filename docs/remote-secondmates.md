@@ -227,7 +227,7 @@ The primary records that remote nudge before delivery and retries it during lock
 Local secondmates retain their generation-specific local pointer contract; remote transfers do not copy those primary-local instruction paths.
 
 `/updatefirstmate` updates each remote code root from that checkout's own update remote, resolved from that host's remotes, then guardedly fast-forwards the persistent remote home to that code-root commit.
-[`architecture.md`](architecture.md#self-updates-stay-safe) owns which remote that resolves to.
+The [`updatefirstmate` skill](../.agents/skills/updatefirstmate/SKILL.md) owns which remote that resolves to.
 Dirty, diverged, unavailable, or otherwise unsafe targets are reported and left untouched.
 
 Retire a remote second mate with the normal guarded command:

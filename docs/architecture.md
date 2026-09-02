@@ -376,15 +376,12 @@ The refresh also prunes local branches whose remote is gone and that no worktree
 ## Self-updates stay safe
 
 `/updatefirstmate` fast-forwards the running firstmate repo and registered secondmate homes from each checkout's update remote, then re-reads updated instructions and nudges updated secondmates without touching project clones.
-That remote is `upstream` when the fork carries nothing of its own - `origin`'s default branch is itself an ancestor of `upstream`'s - and the checkout is an ancestor of `upstream` too; otherwise it is `origin`.
-The question is asked of the remotes rather than of each checkout's HEAD, because these pulls are fast-forward only: deciding per HEAD would let a primary on a fork-local commit follow `origin` while a home leased at an older, purely-canonical commit followed `upstream`, splitting the fleet permanently, and it would let a checkout latch onto `upstream` and never receive the captain's own merged PRs.
-A fork carrying its own commits therefore keeps following its own `origin`, quietly and as an ordinary update; that tracks the fork, which drifts behind the canonical repo whenever the fork stops being synced, and `upstream` tracking resumes by itself once the fork's default branch stops carrying anything of its own.
-A checkout with no `origin` remote at all is skipped rather than switched to `upstream`.
+Which remote that is gets decided per target from the checkout's remotes rather than from its own HEAD, so that every home sharing a remote set resolves identically: these pulls are fast-forward only, so a per-HEAD decision could strand a primary and a home on different remotes with no way back to one another.
 Project clones are not forks of firstmate and keep syncing from their own `origin` through a separate implementation.
 For a remote route, the configured code root updates from that checkout's own update remote on that host before the persistent home fast-forwards to the code-root commit.
 The update is fast-forward only: dirty, diverged, offline, and off-default targets are reported and left untouched.
 Local homes share the guarded fast-forward helper, while remote updates delegate the same safety decision to the configured host through the generic transport.
-The mechanics are owned by the `/updatefirstmate` skill and firstmate's operating manual in [`AGENTS.md`](../AGENTS.md) (self-update).
+The mechanics, including which remote each target resolves to and what the fork fallback does and does not promise, are owned by the [`updatefirstmate` skill](../.agents/skills/updatefirstmate/SKILL.md) and firstmate's operating manual in [`AGENTS.md`](../AGENTS.md) (self-update).
 
 ## Restart-proof
 
