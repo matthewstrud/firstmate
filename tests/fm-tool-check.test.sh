@@ -104,6 +104,39 @@ expect_code 0 "$rc" "a hung --version probe must not fail the presence check"
   || fail "a hung --version must report found with version=unavailable: $out"
 pass "a hung --version hits the probe bound and is reported found with version=unavailable"
 
+# --- a name that resolves in the shell rather than to a file on disk -----------
+
+# `command -v echo` resolves the shell builtin and hands back the bare name
+# `echo`, which is neither a path to report nor a file to probe. Regression:
+# the report used to print `found: echo path=echo version=--version` at exit 0
+# -- both fields false, because it probed the bare name and the builtin simply
+# echoed the flag back. Asserting the exit code alone would not have caught it.
+out=$(PATH="$FAKEBIN:$PATH" "$ROOT/bin/fm-tool-check.sh" echo printf)
+rc=$?
+expect_code 0 "$rc" "a name that resolves as a shell builtin is still present, so the exit must be 0"
+expected=$(printf 'found: echo not-a-file\nfound: printf not-a-file')
+[ "$out" = "$expected" ] \
+  || fail "a shell builtin must be reported found with neither field claimed: $out"
+assert_not_contains "$out" "path=echo" "a bare builtin name must never be reported as a resolved path"
+assert_not_contains "$out" "path=printf" "a bare builtin name must never be reported as a resolved path"
+assert_not_contains "$out" "version=--version" "the flag echoed back by a builtin must never be reported as a version"
+pass "a shell builtin is reported found with no path and no version claimed"
+
+# --- a tool name that begins with a dash ---------------------------------------
+
+# The presence lookup passes `--`, so bash's own `command` builtin does not
+# parse a leading-dash tool name as one of its options and leak
+# `command: --: invalid option` plus its usage text onto stderr.
+dash_err="$TMP_ROOT/dash.err"
+out=$(env PATH="$FAKEBIN:$BASH_DIR" "$ROOT/bin/fm-tool-check.sh" --version 2>"$dash_err")
+rc=$?
+expect_code 1 "$rc" "a leading-dash name that does not resolve must still exit 1"
+[ "$out" = "missing: --version" ] \
+  || fail "a leading-dash name must be reported missing like any other: $out"
+[ ! -s "$dash_err" ] \
+  || fail "a leading-dash name must not leak shell internals to stderr: $(cat "$dash_err")"
+pass "a tool name beginning with a dash is reported missing with a clean stderr"
+
 # --- multiple tools, argument order, mixed exit --------------------------------
 
 out=$(PATH="$FAKEBIN:$PATH" "$ROOT/bin/fm-tool-check.sh" goodtool fm-not-a-real-tool novertool)
@@ -132,5 +165,20 @@ out=$(env FM_TOOL_CHECK_PROBE_SECS=banana PATH="$FAKEBIN:$PATH" "$ROOT/bin/fm-to
 rc=$?
 expect_code 2 "$rc" "an invalid FM_TOOL_CHECK_PROBE_SECS must be a usage error"
 pass "an invalid FM_TOOL_CHECK_PROBE_SECS is rejected with a usage error"
+
+# The range guard is the only thing standing between a caller and an unbounded
+# probe: bin/fm-timeout-lib.sh states that a non-positive bound is not a bound,
+# because `timeout 0` and the perl fallback's `alarm 0` both disable the
+# deadline, so callers must reject 0 before calling.
+for probe_secs in 0 31; do
+  out=$(env FM_TOOL_CHECK_PROBE_SECS="$probe_secs" PATH="$FAKEBIN:$PATH" "$ROOT/bin/fm-tool-check.sh" goodtool 2>&1)
+  rc=$?
+  expect_code 2 "$rc" "an out-of-range FM_TOOL_CHECK_PROBE_SECS ($probe_secs) must be a usage error"
+  assert_contains "$out" "FM_TOOL_CHECK_PROBE_SECS must be an integer between 1 and 30" \
+    "the range error must name the accepted range (got probe seconds $probe_secs)"
+  assert_not_contains "$out" "found: goodtool" \
+    "an out-of-range bound must be rejected before any tool is probed (got probe seconds $probe_secs)"
+done
+pass "an out-of-range FM_TOOL_CHECK_PROBE_SECS (0 and 31) is rejected before any probe runs"
 
 echo "# fm-tool-check.test.sh: all assertions passed"

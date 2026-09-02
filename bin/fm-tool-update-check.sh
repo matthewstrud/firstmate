@@ -1,6 +1,11 @@
 #!/usr/bin/env bash
-# fm-tool-update-check.sh - report watched tooling that has an update available,
-# and tooling whose update is installed but not in effect.
+# fm-tool-update-check.sh - poll a configured set of watched tools for
+# available UPDATES, on the watcher's cadence and with its own arm/disarm
+# lifecycle, and report the tooling that has an update available plus the
+# tooling whose update is installed but not in effect. Its similarly named
+# neighbour bin/fm-tool-check.sh does an unrelated job - it is a one-shot
+# presence report giving the resolved path and --version line of the tools
+# named on its command line.
 #
 # Usage:
 #   fm-tool-update-check.sh [check]
@@ -93,6 +98,9 @@ MAX_LINE=1000
 
 usage() {
   cat <<'EOF'
+Poll watched tools for available updates (not fm-tool-check.sh, which gives a
+one-shot presence, path, and --version report for tools named on its argv).
+
 Usage:
   fm-tool-update-check.sh [check]   report watched tools needing attention (silent when current)
   fm-tool-update-check.sh arm       write and register state/tool-updates.check.sh
