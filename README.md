@@ -85,9 +85,8 @@ cd firstmate
 ```
 
 If you work from a fork instead, add the canonical repo as `upstream` (`git remote add upstream https://github.com/kunchenguid/firstmate`).
-`/updatefirstmate` then pulls from `upstream` rather than from your fork while your fork carries nothing of its own, so an update never quietly delivers whatever your fork was last synced to.
-Once your fork's default branch carries commits the canonical repo lacks - your own merged PRs, or the merge commits GitHub's "Sync fork" button creates - updates fall back to your own `origin`, because these pulls are fast-forward only and your commits must not be discarded.
-That fallback tracks your fork, which drifts behind the canonical repo whenever you stop syncing it; `upstream` tracking resumes by itself, with nothing to reconfigure, once your fork's default branch stops carrying anything of its own.
+`/updatefirstmate` then pulls from `upstream` rather than from your fork, so an update never quietly delivers whatever your fork was last synced to; nothing else needs configuring, and a fork carrying commits of its own keeps following that fork instead.
+Exactly when each remote is chosen, and what the fork fallback does and does not promise, is in [docs/architecture.md](docs/architecture.md#self-updates-stay-safe).
 
 Then launch one of the co-primary harnesses; AGENTS.md takes over from there:
 
