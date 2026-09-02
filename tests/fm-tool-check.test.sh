@@ -104,23 +104,91 @@ expect_code 0 "$rc" "a hung --version probe must not fail the presence check"
   || fail "a hung --version must report found with version=unavailable: $out"
 pass "a hung --version hits the probe bound and is reported found with version=unavailable"
 
-# --- a name that resolves in the shell rather than to a file on disk -----------
+# --- a PATH executable shadowed by a same-named shell builtin ------------------
 
-# `command -v echo` resolves the shell builtin and hands back the bare name
-# `echo`, which is neither a path to report nor a file to probe. Regression:
-# the report used to print `found: echo path=echo version=--version` at exit 0
-# -- both fields false, because it probed the bare name and the builtin simply
-# echoed the flag back. Asserting the exit code alone would not have caught it.
-out=$(PATH="$FAKEBIN:$PATH" "$ROOT/bin/fm-tool-check.sh" echo printf)
+# echo, printf, pwd, test, kill, and time are all bash builtins that also
+# exist as real files on PATH, and the file is what this helper exists to
+# report. A shadowbin of its own keeps the shadowing tools out of the fakebin
+# every other case puts on PATH.
+SHADOWBIN="$TMP_ROOT/shadowbin"
+mkdir -p "$SHADOWBIN"
+for shadowed in echo printf; do
+  cat > "$SHADOWBIN/$shadowed" <<SH
+#!/usr/bin/env bash
+printf 'shadowed-$shadowed 7.7.7\\n'
+exit 0
+SH
+  chmod +x "$SHADOWBIN/$shadowed"
+done
+
+# Regression: the lookup used to answer with the shell builtin in preference
+# to the executable, reporting `found: echo not-a-file` and withholding a path
+# and a version that both exist. Asserting the exit code alone would not have
+# caught it -- the broken output was exit 0 too.
+out=$(PATH="$SHADOWBIN:$PATH" "$ROOT/bin/fm-tool-check.sh" echo printf)
 rc=$?
-expect_code 0 "$rc" "a name that resolves as a shell builtin is still present, so the exit must be 0"
-expected=$(printf 'found: echo not-a-file\nfound: printf not-a-file')
+expect_code 0 "$rc" "a tool found on PATH must exit 0"
+expected=$(printf 'found: echo path=%s/echo version=shadowed-echo 7.7.7\nfound: printf path=%s/printf version=shadowed-printf 7.7.7' "$SHADOWBIN" "$SHADOWBIN")
 [ "$out" = "$expected" ] \
-  || fail "a shell builtin must be reported found with neither field claimed: $out"
-assert_not_contains "$out" "path=echo" "a bare builtin name must never be reported as a resolved path"
-assert_not_contains "$out" "path=printf" "a bare builtin name must never be reported as a resolved path"
-assert_not_contains "$out" "version=--version" "the flag echoed back by a builtin must never be reported as a version"
-pass "a shell builtin is reported found with no path and no version claimed"
+  || fail "a PATH executable must win over a same-named shell builtin: $out"
+assert_not_contains "$out" "not-a-file" "a name with a real executable on PATH must never report not-a-file"
+pass "a PATH executable wins over a same-named shell builtin and reports its path and version"
+
+# The same must hold for the real system tools, not just for fixtures: these
+# names are builtins, and each still has to report the absolute path of the
+# installed file.
+out=$(PATH="$FAKEBIN:$PATH" "$ROOT/bin/fm-tool-check.sh" printf pwd)
+rc=$?
+expect_code 0 "$rc" "real builtin-shadowed system tools must exit 0"
+assert_not_contains "$out" "not-a-file" "an installed system tool must never report not-a-file"
+while read -r line; do
+  case "$line" in
+    "found: "*" path=/"*) : ;;
+    *) fail "a builtin-shadowed system tool must report an absolute resolved path: $line" ;;
+  esac
+done <<EOF
+$out
+EOF
+pass "builtin-shadowed system tools report the absolute path of the installed file"
+
+# --- a name that exists only inside the shell ----------------------------------
+
+# shopt and declare are bash builtins with no executable of that name on PATH,
+# so there is no path to report and no file to probe. They must still be
+# reported found, never silently dropped and never given invented fields.
+out=$(PATH="$FAKEBIN:$PATH" "$ROOT/bin/fm-tool-check.sh" shopt declare)
+rc=$?
+expect_code 0 "$rc" "a builtin with no PATH executable still resolves, so the exit must be 0"
+expected=$(printf 'found: shopt not-a-file\nfound: declare not-a-file')
+[ "$out" = "$expected" ] \
+  || fail "a shell-only builtin must be reported found with neither field claimed: $out"
+assert_not_contains "$out" "path=" "a shell-only builtin must never be given a path"
+assert_not_contains "$out" "version=" "a shell-only builtin must never be given a version"
+pass "a builtin with no PATH executable is reported found with no path and no version claimed"
+
+# --- a shell function is not an installed tool ---------------------------------
+
+# Regression: the lookup used to answer with any shell resolution, so this
+# script's OWN function names came back as found tools at exit 0 -- reporting
+# something no caller could ever install as present. A function is not a tool,
+# whether it is defined inside this script or exported into its environment.
+out=$(env PATH="$FAKEBIN:$BASH_DIR" "$ROOT/bin/fm-tool-check.sh" usage tool_version_line)
+rc=$?
+expect_code 1 "$rc" "a name that is not an installed tool must exit 1"
+expected=$(printf 'missing: usage\nmissing: tool_version_line')
+[ "$out" = "$expected" ] \
+  || fail "a function defined inside the script must be reported missing, not found: $out"
+assert_not_contains "$out" "found:" "the script's own function names must never be reported as found tools"
+pass "a function defined inside the script is reported missing, not mistaken for a tool"
+
+# An exported function must not shadow the real tool it wraps either: the
+# report has to answer with the executable on PATH, not with the wrapper.
+out=$(PATH="$SHADOWBIN:$PATH" bash -c 'echo() { :; }; export -f echo; "$1/bin/fm-tool-check.sh" echo' _ "$ROOT")
+rc=$?
+expect_code 0 "$rc" "an exported wrapper must not change the answer for a real tool"
+[ "$out" = "found: echo path=$SHADOWBIN/echo version=shadowed-echo 7.7.7" ] \
+  || fail "an exported function must not shadow the PATH executable it wraps: $out"
+pass "an exported shell function does not shadow the PATH executable of the same name"
 
 # --- a tool name that begins with a dash ---------------------------------------
 

@@ -21,12 +21,20 @@
 #   found: <tool> not-a-file
 #   missing: <tool>
 #
-# The not-a-file line reports a name that resolves inside the shell rather
-# than to an executable file on disk - a builtin, keyword, function, or alias
-# such as echo, printf, or pwd. Such a name has no path to report and no file
-# to probe, so neither field is claimed rather than being filled with a value
+# Lookup is PATH-first, so a real executable always wins: echo, printf, and
+# pwd report their /usr/bin file and its version even though the shell also
+# has a builtin of that name.
+#
+# The not-a-file line reports a name that exists only inside the shell - a
+# builtin or keyword with no executable of that name anywhere on PATH, such as
+# shopt, declare, or export. Such a name has no path to report and no file to
+# probe, so neither field is claimed rather than being filled with a value
 # that is not true. It still resolves, so it is not missing and does not make
 # the exit 1.
+#
+# A shell function or alias is not an installed tool, so it is reported
+# missing rather than found. Nothing a caller could not install is ever
+# claimed as present, including this script's own function names.
 #
 # Exits 0 when every named tool resolves, 1 when any does not, and 2 on a
 # usage error. The version probe runs the resolved path rather than the bare
@@ -48,8 +56,8 @@ One-shot presence report for the named tools, one line each in argument order
 (not fm-tool-update-check.sh, which polls watched tools for available updates):
   found: <tool> path=<resolved path> version=<first line of --version>
   found: <tool> path=<resolved path> version=unavailable
-  found: <tool> not-a-file   resolves in the shell (builtin, keyword, function,
-                             alias), so no path or version is claimed
+  found: <tool> not-a-file   a builtin or keyword with no executable of that
+                             name on PATH, so no path or version is claimed
   missing: <tool>
 
 Exits 0 when every named tool resolves, 1 when any does not, 2 on a usage error.
@@ -73,16 +81,6 @@ if [ "$PROBE_SECS" -lt 1 ] || [ "$PROBE_SECS" -gt 30 ]; then
   exit 2
 fi
 
-# True when a `command -v` resolution names an executable file on disk. A
-# builtin, keyword, function, or alias resolves to a bare name with no slash
-# in it, which is neither a path to report nor a file to probe.
-resolution_is_file() {
-  case "$1" in
-    */*) [ -f "$1" ] && [ -x "$1" ] ;;
-    *) return 1 ;;
-  esac
-}
-
 # Print the first line of <path> --version, trimmed, or nothing. The probe is
 # hard-bound and fed /dev/null on stdin, so a tool that rejects --version,
 # exits nonzero, prints nothing, or hangs reports no version instead of
@@ -97,15 +95,22 @@ tool_version_line() {
   printf '%s' "$line"
 }
 
+# `type -P` searches PATH alone, ignoring the builtins, keywords, functions,
+# and aliases that `command -v` would answer with in preference to a real
+# executable, and it rejects a directory or a non-executable file.
 missing=0
 for tool in "$@"; do
-  if ! path=$(command -v -- "$tool"); then
-    printf 'missing: %s\n' "$tool"
-    missing=1
-    continue
-  fi
-  if ! resolution_is_file "$path"; then
-    printf 'found: %s not-a-file\n' "$tool"
+  path=$(type -P -- "$tool" 2>/dev/null) || path=
+  if [ -z "$path" ]; then
+    case "$(type -t -- "$tool" 2>/dev/null || true)" in
+      builtin|keyword)
+        printf 'found: %s not-a-file\n' "$tool"
+        ;;
+      *)
+        printf 'missing: %s\n' "$tool"
+        missing=1
+        ;;
+    esac
     continue
   fi
   version=$(tool_version_line "$path")
