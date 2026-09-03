@@ -15,8 +15,8 @@
 // file lives in .pi/extensions, so no
 // other harness ever loads it. Supervision is default-on for every task once
 // this Pi session owns the fleet lock: no captain grant file is required.
-// Away mode (or a broken branch) keeps today's wake-to-main behavior
-// untouched regardless.
+// Away mode (or a broken branch between its bounded recovery probes) keeps
+// today's wake-to-main behavior untouched regardless.
 //
 // Prefix stability (the cache contract, owner: bin/fm-branch-prompt.sh
 // header): the branch's system prompt is the generator's byte-stable output,
@@ -33,10 +33,11 @@
 // for the whole process; and a secondary read-only Pi session that never owns
 // the lock must never write markers, clean leases, or accept wakes.
 //
-// Failure direction: every path that cannot reach a working branch falls back
-// to delivering the wake to MAIN exactly as before the branch existed - a
-// broken branch degrades to today's behavior, never to a lost wake. The wake
-// queue itself stays durable until the handler runs the drain's
+// Failure direction: every accepted path that cannot reach a working branch
+// rejects its settlement to the watcher, which retains delivery ownership and
+// routes the wake to MAIN through its consumption-acknowledged path. A broken
+// branch declines later offers, so they take that same watcher path directly.
+// The wake queue itself stays durable until the handler runs the drain's
 // acknowledgement, so a branch that dies mid-handling re-presents its rows at
 // the next drain exactly as a mid-handling main crash always has.
 //
@@ -153,11 +154,13 @@ const PROCESSING_MESSAGE_TYPE = "fm-branch-process";
 // (deliverAs nextTurn). Bounded so an answer that repeatedly ignores the
 // request cannot become an unbounded loop of empty turns.
 const PROCESSING_TRIGGERED_ATTEMPTS = 2;
-// One provider failure falls back immediately but leaves room for a transient
-// outage to recover on the next wake. A second consecutive provider failure
-// latches the branch off so later offers stay on main without paying for
-// another predictably broken branch prompt.
+// One provider failure rejects immediately to watcher-owned fallback but leaves
+// room for a transient outage to recover on the next wake. A second consecutive
+// provider failure latches the branch off. While latched, main keeps every wake
+// except one branch recovery probe after each exponentially backed-off cooldown.
 const PROVIDER_ERROR_LATCH_THRESHOLD = 2;
+const PROVIDER_REPROBE_BASE_MS = 5 * 60 * 1000;
+const PROVIDER_REPROBE_MAX_MS = 60 * 60 * 1000;
 const PROCESSING_INSTRUCTION =
   "This is a supervision processing request delivered automatically by the supervision branch. " +
   "It was not typed by the captain. " +
@@ -177,6 +180,11 @@ type OutcomeRow = {
   silent: boolean;
 };
 type VisibleOutcomeRecord = OutcomeRow & { version: 1 };
+type ProviderRecovery = {
+  cooldownMs: number;
+  retryNotBefore: number;
+  probeInFlight: boolean;
+};
 
 const scriptEnv = {
   ...process.env,
@@ -484,6 +492,7 @@ export default function (pi: ExtensionAPI) {
   let branch: BranchSession | null = null;
   let branchBroken = "";
   let consecutiveProviderErrors = 0;
+  let providerRecovery: ProviderRecovery | null = null;
   // A revision advances only after fm_branch_report has appended successfully,
   // so a prompt can prove that it created a durable outcome after claiming its
   // wake rows without relying on provider text or incidental session shape.
@@ -538,6 +547,48 @@ export default function (pi: ExtensionAPI) {
 
   function rememberMainModel(ctx?: { model?: { provider: string; id: string } }): void {
     if (ctx?.model) mainModel = { provider: ctx.model.provider, id: ctx.model.id };
+  }
+
+  function deliverBranchHealthNote(text: string): void {
+    const message = { customType: "fm-branch-merge", content: `${MERGE_NOTE_BOAT} ${text}`, display: true };
+    if (mainStreaming) pi.sendMessage(message, { deliverAs: "nextTurn" });
+    else pi.sendMessage(message, {});
+  }
+
+  function recordSettledProviderError(detail: string): void {
+    consecutiveProviderErrors += 1;
+    if (consecutiveProviderErrors < PROVIDER_ERROR_LATCH_THRESHOLD && !providerRecovery) return;
+    const previousCooldownMs = providerRecovery?.cooldownMs;
+    const firstLatch = previousCooldownMs === undefined;
+    const cooldownMs = firstLatch
+      ? PROVIDER_REPROBE_BASE_MS
+      : Math.min(PROVIDER_REPROBE_MAX_MS, previousCooldownMs * 2);
+    branchBroken = detail;
+    providerRecovery = {
+      cooldownMs,
+      retryNotBefore: Date.now() + cooldownMs,
+      probeInFlight: false,
+    };
+    if (firstLatch) {
+      deliverBranchHealthNote("Supervision branch paused after repeated provider errors; main will handle wakes while it cools down.");
+    }
+  }
+
+  function recordDurableBranchReport(reportGeneration: number, reportSelectionRevision: number): void {
+    if (reportGeneration !== generation || reportSelectionRevision !== branchSelectionRevision) return;
+    consecutiveProviderErrors = 0;
+    if (!providerRecovery) return;
+    branchBroken = "";
+    providerRecovery = null;
+    deliverBranchHealthNote("Supervision branch recovered after a successful cooldown probe.");
+  }
+
+  function finishProviderProbe(probeGeneration: number, probeSelectionRevision: number): void {
+    if (probeGeneration !== generation || probeSelectionRevision !== branchSelectionRevision || !providerRecovery) return;
+    providerRecovery.probeInFlight = false;
+    if (branchBroken && providerRecovery.retryNotBefore <= Date.now()) {
+      providerRecovery.retryNotBefore = Date.now() + providerRecovery.cooldownMs;
+    }
   }
 
   // Resolves one model against the isolated branch runtime using only the
@@ -851,7 +902,7 @@ export default function (pi: ExtensionAPI) {
         task: Type.String({ description: "The task id the event belongs to (or 'fleet' for fleet-wide events)" }),
         verdict: Type.Union([Type.Literal("routine"), Type.Literal("captain")], {
           description:
-            "Use captain unconditionally for an outcome that directly answers an explicit captain request, regardless of whether it is healthy, routine, measured, actionable, or requires a decision. Also use captain for work ready for review, captain-only decisions, blockers or failures after recovery is exhausted, needed credentials, and destructive, irreversible, or security-sensitive actions; use routine otherwise.",
+            "Use captain or routine exactly as the \"Verdict: routine or captain\" section of your system prompt decides; that section is the one owner of the rule.",
         }),
         summary: Type.String({
           description:
@@ -912,6 +963,7 @@ export default function (pi: ExtensionAPI) {
 
   async function createBranch(
     branchGeneration: number,
+    selectionRevision: number,
   ): Promise<{ session: AgentSession; sessionManager: SessionManager }> {
     // Resolved first, before any session file or prompt work: a model pin Pi
     // cannot honor must fail before this build leaves anything behind. Every
@@ -1009,7 +1061,10 @@ ${context.command}
       sessionManager,
       resourceLoader: loader,
       tools: [...BRANCH_TOOL_NAMES],
-      customTools: [bashTool as unknown as ToolDefinition, createReportTool(branchGeneration)],
+      customTools: [
+        bashTool as unknown as ToolDefinition,
+        createReportTool(branchGeneration),
+      ],
       ...(pinned ? { model: pinned.model, modelRuntime: pinned.modelRuntime } : {}),
       ...(effort === undefined ? {} : { thinkingLevel: effort }),
     });
@@ -1027,14 +1082,14 @@ ${context.command}
     return { session: created.session, sessionManager };
   }
 
-  async function ensureBranch(expectedGeneration: number): Promise<BranchSession> {
+  async function ensureBranch(expectedGeneration: number, recoveryProbe = false): Promise<BranchSession> {
     if (!actingAsOwner(expectedGeneration)) throw new Error("supervision session was replaced or lost lock ownership");
-    if (branchBroken) throw new Error(branchBroken);
+    if (branchBroken && !(recoveryProbe && providerRecovery?.probeInFlight)) throw new Error(branchBroken);
     if (branch) return branch;
     while (true) {
       const buildRevision = branchSelectionRevision;
       try {
-        const created = await createBranch(expectedGeneration);
+        const created = await createBranch(expectedGeneration, buildRevision);
         if (buildRevision !== branchSelectionRevision) {
           try {
             created.session.dispose();
@@ -1082,27 +1137,15 @@ ${context.command}
     }
   }
 
-  async function fallbackToMain(message: string, detail: string): Promise<void> {
-    const body = `FIRSTMATE WATCHER WAKE: ${message}\n\nRun bin/fm-wake-drain.sh first and handle the queued wake. (Supervision branch unavailable, falling back to main: ${detail})`;
-    let content = body;
-    try {
-      // Marked operational like every watcher injection, so the wake is never
-      // mistaken for captain input (away-mode return semantics, mirror filter).
-      content = encodeFirstmateOperationalInput("watcher", body);
-    } catch {
-      // An encoding failure must not lose the wake; deliver it unmarked.
-    }
-    await pi.sendUserMessage(content, { deliverAs: "followUp" });
-  }
-
-  function enqueueWake(message: string, acceptedGeneration: number): void {
-    branchChain = branchChain
+  function enqueueWake(message: string, acceptedGeneration: number, recoveryProbe = false): Promise<void> {
+    const acceptedSelectionRevision = branchSelectionRevision;
+    const delivery = branchChain
       .then(async () => {
         if (shuttingDown || acceptedGeneration !== generation) {
           throw new Error("supervision session was replaced before handling the accepted wake");
         }
         if (!actingAsOwner(acceptedGeneration)) throw new Error("supervision session no longer owns the fleet lock");
-        const branchForWake = await ensureBranch(acceptedGeneration);
+        const branchForWake = await ensureBranch(acceptedGeneration, recoveryProbe);
         const { session, sessionManager } = branchForWake;
         await flushMirror(session, acceptedGeneration);
         if (!actingAsOwner(acceptedGeneration)) throw new Error("supervision session no longer owns the fleet lock");
@@ -1145,30 +1188,27 @@ ${context.command}
             branchForWake.generation === generation &&
             branchForWake.selectionRevision === branchSelectionRevision
           ) {
-            consecutiveProviderErrors += 1;
-            if (consecutiveProviderErrors >= PROVIDER_ERROR_LATCH_THRESHOLD) branchBroken = detail;
+            recordSettledProviderError(detail);
           }
           throw new Error(detail);
-        }
-        if (
-          branchForWake.generation === generation &&
-          branchForWake.selectionRevision === branchSelectionRevision
-        ) {
-          consecutiveProviderErrors = 0;
         }
         if (durableReportRevision <= reportRevisionBeforePrompt) {
           throw new Error("supervision branch prompt settled but produced no durable outcome for its claimed wake rows");
         }
+        recordDurableBranchReport(branchForWake.generation, branchForWake.selectionRevision);
         if (!releaseEligibleRowsSnapshot(state, wakeGrantScript, String(acceptedGeneration))) {
           throw new Error("could not release the branch's settled wake-row grant");
         }
       })
-      .catch(async (error: unknown) => {
+      .catch((error: unknown) => {
         releaseEligibleRowsSnapshot(state, wakeGrantScript, String(acceptedGeneration));
-        try {
-          await fallbackToMain(message, error instanceof Error ? error.message : String(error));
-        } catch {}
+        throw error;
+      })
+      .finally(() => {
+        if (recoveryProbe) finishProviderProbe(acceptedGeneration, acceptedSelectionRevision);
       });
+    branchChain = delivery.catch(() => {});
+    return delivery;
   }
 
   // A model or effort change applies to the next branch turn without waiting
@@ -1181,6 +1221,7 @@ ${context.command}
   function releaseBranchForSelectionChange(): void {
     branchBroken = "";
     consecutiveProviderErrors = 0;
+    providerRecovery = null;
     const stale = branch;
     branch = null;
     if (!stale) return;
@@ -1227,14 +1268,20 @@ ${context.command}
     if (!offerEligible(offer)) return;
     if (!actingAsOwner()) return; // cold start pre-lock, secondary session, or shutdown
     if (afkActive()) return; // the away daemon owns supervision while afk
-    if (branchBroken) return; // fail back to today's wake-to-main path
+    const recoveryProbe = Boolean(
+      branchBroken &&
+      providerRecovery &&
+      !providerRecovery.probeInFlight &&
+      Date.now() >= providerRecovery.retryNotBefore
+    );
+    if (branchBroken && !recoveryProbe) return; // main owns every wake inside the cooldown window
     if (!reconcileUnreadOutcomes(generation)) {
       branchBroken = "could not reconcile unread supervision outcomes into main";
       return;
     }
     if (!collectCurrentMainDialog()) return;
-    offer.accept();
-    enqueueWake(offer.message, generation);
+    if (recoveryProbe && providerRecovery) providerRecovery.probeInFlight = true;
+    offer.accept(enqueueWake(offer.message, generation, recoveryProbe));
   });
 
   pi.on?.("before_agent_start", (event, ctx) => {
@@ -1308,6 +1355,7 @@ ${context.command}
     shuttingDown = false;
     branchBroken = "";
     consecutiveProviderErrors = 0;
+    providerRecovery = null;
     generation += 1;
     if (actingAsOwner(generation) && !reconcileUnreadOutcomes(generation)) {
       branchBroken = "could not reconcile unread supervision outcomes into main";
