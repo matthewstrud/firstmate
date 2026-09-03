@@ -44,6 +44,17 @@ run_waiter() {
 rc_of() { printf '%s\n' "${1%%|*}"; }
 out_of() { printf '%s\n' "${1#*|}"; }
 
+CURRENT_CASE=""
+
+# fail_case <message>: an assertion belonging to the case under test failed, as
+# distinct from fixture setup dying early. The attribution line names the case,
+# and the perturbation harness requires it before crediting a break with a kill.
+fail_case() {
+  printf 'not ok - %s\n' "$1" >&2
+  printf 'case-assertion-failed %s\n' "$CURRENT_CASE" >&2
+  exit 1
+}
+
 # spawn_sleeper: start a long-lived process we own and echo its pid.
 # The redirects matter: without them the sleeper inherits the command
 # substitution's pipe and $(spawn_sleeper) blocks until the sleeper exits.
@@ -79,40 +90,44 @@ case_refuses_pattern_shaped_arguments() {
   for arg in --pattern --match --name --process --proc; do
     r=$(run_waiter --pid "$dead" "$arg" pytest)
     [ "$(rc_of "$r")" = 2 ] ||
-      fail "$arg alongside a satisfiable --pid must be refused, got rc=$(rc_of "$r")"
+      fail_case "$arg alongside a satisfiable --pid must be refused, got rc=$(rc_of "$r")"
   done
   pass "pattern-shaped flags are refused even when another condition would succeed"
 
   r=$(run_waiter --pid "$dead" pytest)
   [ "$(rc_of "$r")" = 2 ] ||
-    fail "a bare positional must be refused, not treated as a pattern (rc=$(rc_of "$r"))"
+    fail_case "a bare positional must be refused, not treated as a pattern (rc=$(rc_of "$r"))"
   pass "there is no positional fallback a pattern could arrive through"
 
-  r=$(run_waiter --pattern pytest)
+  r=$(run_waiter --match pytest)
   case $(out_of "$r") in
     *--pid*--marker* | *--marker*--pid*) ;;
-    *) fail "the refusal must name --pid and --marker: $(out_of "$r")" ;;
+    *) fail_case "the refusal must name --pid and --marker: $(out_of "$r")" ;;
   esac
   case $(out_of "$r") in
-    *pattern*) ;;
-    *) fail "the refusal must explain why patterns are not offered: $(out_of "$r")" ;;
+    *"deliberately no pattern mode"*) ;;
+    *) fail_case "the refusal must say no pattern mode is offered: $(out_of "$r")" ;;
   esac
-  pass "the refusal names the two supported modes and why patterns are absent"
+  case $(out_of "$r") in
+    *"matches the very shell doing the waiting"*) ;;
+    *) fail_case "the refusal must explain WHY patterns are not offered: $(out_of "$r")" ;;
+  esac
+  pass "the refusal names the two supported modes and explains why patterns are absent"
 }
 
 case_refuses_a_wait_with_no_condition() {
   local r
   r=$(run_waiter --timeout 1)
   [ "$(rc_of "$r")" = 2 ] ||
-    fail "no --pid and no --marker must be a usage error, not a silent success (rc=$(rc_of "$r"))"
+    fail_case "no --pid and no --marker must be a usage error, not a silent success (rc=$(rc_of "$r"))"
 
   r=$(run_waiter --marker "$MARKER" --timeout 1)
   [ "$(rc_of "$r")" = 2 ] ||
-    fail "--marker without --file must be a usage error (rc=$(rc_of "$r"))"
+    fail_case "--marker without --file must be a usage error (rc=$(rc_of "$r"))"
 
   r=$(run_waiter --file "$TMP_ROOT/anything.log" --timeout 1)
   [ "$(rc_of "$r")" = 2 ] ||
-    fail "--file without --marker must be a usage error (rc=$(rc_of "$r"))"
+    fail_case "--file without --marker must be a usage error (rc=$(rc_of "$r"))"
   pass "a wait with nothing to wait for is refused rather than satisfied instantly"
 }
 
@@ -121,16 +136,16 @@ case_live_pid_times_out_and_exited_pid_satisfies() {
   pid=$(spawn_sleeper)
   r=$(run_waiter --pid "$pid" --timeout 1 --interval 1)
   [ "$(rc_of "$r")" = 1 ] ||
-    fail "a live pid must time out (rc=1), got rc=$(rc_of "$r"): $(out_of "$r")"
+    fail_case "a live pid must time out (rc=1), got rc=$(rc_of "$r"): $(out_of "$r")"
   case $(out_of "$r") in
     *"still alive"*) ;;
-    *) fail "the timeout must say the pid is still alive: $(out_of "$r")" ;;
+    *) fail_case "the timeout must say the pid is still alive: $(out_of "$r")" ;;
   esac
   reap "$pid"
 
   r=$(run_waiter --pid "$pid" --timeout 5 --interval 1)
   [ "$(rc_of "$r")" = 0 ] ||
-    fail "an exited pid must satisfy the wait (rc=0), got rc=$(rc_of "$r"): $(out_of "$r")"
+    fail_case "an exited pid must satisfy the wait (rc=0), got rc=$(rc_of "$r"): $(out_of "$r")"
   pass "--pid tells a running process from an exited one, and timeout from success"
 }
 
@@ -140,24 +155,24 @@ case_absent_marker_times_out_and_written_marker_satisfies() {
   rm -f "$log"
   r=$(run_waiter --marker "$MARKER" --file "$log" --timeout 1 --interval 1)
   [ "$(rc_of "$r")" = 1 ] ||
-    fail "a file that does not exist yet must read as unfinished, got rc=$(rc_of "$r")"
+    fail_case "a file that does not exist yet must read as unfinished, got rc=$(rc_of "$r")"
   case $(out_of "$r") in
-    *"No such file"*) fail "a missing file must not spew a grep error: $(out_of "$r")" ;;
+    *"No such file"*) fail_case "a missing file must not spew a grep error: $(out_of "$r")" ;;
   esac
 
   printf 'pass A\nstill going\n' > "$log"
   r=$(run_waiter --marker "$MARKER" --file "$log" --timeout 1 --interval 1)
   [ "$(rc_of "$r")" = 1 ] ||
-    fail "an unfinished log must time out rather than satisfy, got rc=$(rc_of "$r")"
+    fail_case "an unfinished log must time out rather than satisfy, got rc=$(rc_of "$r")"
   case $(out_of "$r") in
     *ABSENT*) ;;
-    *) fail "the timeout must report the marker absent: $(out_of "$r")" ;;
+    *) fail_case "the timeout must report the marker absent: $(out_of "$r")" ;;
   esac
 
   printf '%s\n' "$MARKER" >> "$log"
   r=$(run_waiter --marker "$MARKER" --file "$log" --timeout 5 --interval 1)
   [ "$(rc_of "$r")" = 0 ] ||
-    fail "the written marker must satisfy the wait, got rc=$(rc_of "$r"): $(out_of "$r")"
+    fail_case "the written marker must satisfy the wait, got rc=$(rc_of "$r"): $(out_of "$r")"
   pass "--marker watches the artifact and tells unfinished from finished"
 }
 
@@ -168,12 +183,12 @@ case_pid_and_marker_together_require_both() {
   pid=$(spawn_sleeper)
   r=$(run_waiter --pid "$pid" --marker "$MARKER" --file "$log" --timeout 1 --interval 1)
   [ "$(rc_of "$r")" = 1 ] ||
-    fail "marker present but process still alive must not satisfy, got rc=$(rc_of "$r")"
+    fail_case "marker present but process still alive must not satisfy, got rc=$(rc_of "$r")"
   reap "$pid"
 
   r=$(run_waiter --pid "$pid" --marker "$MARKER" --file "$log" --timeout 5 --interval 1)
   [ "$(rc_of "$r")" = 0 ] ||
-    fail "pid exited and marker present must satisfy, got rc=$(rc_of "$r"): $(out_of "$r")"
+    fail_case "pid exited and marker present must satisfy, got rc=$(rc_of "$r"): $(out_of "$r")"
   pass "given both, the wait needs the process gone AND the artifact finished"
 }
 
@@ -203,13 +218,13 @@ case_immune_to_a_self_matching_caller() {
   r=$(bash -c "bash '$WAITER' --marker 'fm-wait-for-selfmatch-$$-done' --file '$log' --timeout 1 --interval 1 2>&1; printf '%s' \$?")
   case $r in
     *1) ;;
-    *) fail "unfinished work must still time out for a self-matching caller: $r" ;;
+    *) fail_case "unfinished work must still time out for a self-matching caller: $r" ;;
   esac
 
   printf 'fm-wait-for-selfmatch-%s-done\n' "$$" >> "$log"
   r=$(bash -c "bash '$WAITER' --marker 'fm-wait-for-selfmatch-$$-done' --file '$log' --timeout 5 --interval 1 --quiet 2>&1; printf '%s' \$?")
   [ "$r" = 0 ] ||
-    fail "finished work must satisfy the wait for a self-matching caller: $r"
+    fail_case "finished work must satisfy the wait for a self-matching caller: $r"
   pass "a caller whose own command line contains the waited-on text gets the truth"
 }
 
@@ -225,15 +240,15 @@ case_refuses_empty_flag_values() {
 
   r=$(run_waiter --marker '' --pid "$dead" --timeout 0)
   [ "$(rc_of "$r")" = 2 ] ||
-    fail "an empty --marker must be refused, not dropped beside a satisfiable --pid (rc=$(rc_of "$r"))"
+    fail_case "an empty --marker must be refused, not dropped beside a satisfiable --pid (rc=$(rc_of "$r"))"
 
   r=$(run_waiter --pid '' --marker "$MARKER" --file "$log" --timeout 0)
   [ "$(rc_of "$r")" = 2 ] ||
-    fail "an empty --pid must be refused, not dropped beside a satisfiable --marker (rc=$(rc_of "$r"))"
+    fail_case "an empty --pid must be refused, not dropped beside a satisfiable --marker (rc=$(rc_of "$r"))"
 
   r=$(run_waiter --marker "$MARKER" --file '' --timeout 0)
   [ "$(rc_of "$r")" = 2 ] ||
-    fail "an empty --file must be refused (rc=$(rc_of "$r"))"
+    fail_case "an empty --file must be refused (rc=$(rc_of "$r"))"
   pass "an empty flag value is a usage error, never a condition silently dropped"
 }
 
@@ -247,20 +262,20 @@ case_refuses_a_whitespace_only_marker_but_keeps_multi_word_markers() {
 
   r=$(run_waiter --marker ' ' --file "$log" --timeout 0)
   [ "$(rc_of "$r")" = 2 ] ||
-    fail "a space-only --marker must be refused, not matched against the first line with a space (rc=$(rc_of "$r"))"
+    fail_case "a space-only --marker must be refused, not matched against the first line with a space (rc=$(rc_of "$r"))"
 
   r=$(run_waiter --marker "$(printf '\t ')" --file "$log" --timeout 0)
   [ "$(rc_of "$r")" = 2 ] ||
-    fail "a whitespace-only --marker must be refused whatever the whitespace is (rc=$(rc_of "$r"))"
+    fail_case "a whitespace-only --marker must be refused whatever the whitespace is (rc=$(rc_of "$r"))"
 
   r=$(run_waiter --marker "$MARKER" --file "$log" --timeout 0)
   [ "$(rc_of "$r")" = 1 ] ||
-    fail "a multi-word marker must stay accepted and read as unfinished, got rc=$(rc_of "$r"): $(out_of "$r")"
+    fail_case "a multi-word marker must stay accepted and read as unfinished, got rc=$(rc_of "$r"): $(out_of "$r")"
 
   printf '%s\n' "$MARKER" >> "$log"
   r=$(run_waiter --marker "$MARKER" --file "$log" --timeout 0)
   [ "$(rc_of "$r")" = 0 ] ||
-    fail "a multi-word marker must still satisfy once written, got rc=$(rc_of "$r"): $(out_of "$r")"
+    fail_case "a multi-word marker must still satisfy once written, got rc=$(rc_of "$r"): $(out_of "$r")"
   pass "only an entirely-whitespace marker is refused; a multi-word marker keeps working"
 }
 
@@ -277,11 +292,13 @@ CASES=(
 
 if [ -n "${FM_WAIT_FOR_ONLY_CASE:-}" ]; then
   WAITER=${FM_WAIT_FOR_WAITER:-$WAITER}
+  CURRENT_CASE=$FM_WAIT_FOR_ONLY_CASE
   "$FM_WAIT_FOR_ONLY_CASE"
   exit 0
 fi
 
 for c in "${CASES[@]}"; do
+  CURRENT_CASE=$c
   "$c"
 done
 
@@ -352,6 +369,21 @@ case_refuses_a_whitespace_only_marker_but_keeps_multi_word_markers
       has_content "$2" || die_usage "--marker requires a string with content, not an empty or whitespace-only value"
       case $2 in *[[:space:]]*) die_usage "--marker requires a string with content, not an empty or whitespace-only value" ;; esac
 the guard widens from whitespace-only to whitespace-containing, refusing the multi-word markers that are the point
+--
+case_refuses_pattern_shaped_arguments
+  printf 'Wait with --pid <n> (one process by identity) and/or --marker <string> --file <path>\n' >&2
+  :
+the refusal stops naming the two modes a caller should have used instead
+--
+case_refuses_pattern_shaped_arguments
+  printf '(a fixed string the work writes when done). There is deliberately no pattern mode:\n' >&2
+  :
+the refusal stops stating that no pattern mode is offered at all
+--
+case_refuses_pattern_shaped_arguments
+  printf 'a process-name pattern matches the very shell doing the waiting, so the wait never\n' >&2
+  :
+the refusal stops explaining why patterns are not offered, leaving a bare rejection
 RECORDS
 }
 
@@ -370,14 +402,17 @@ while IFS= read -r case_name && IFS= read -r anchor && IFS= read -r replacement 
   ! cmp -s "$copy" "$ROOT/bin/fm-wait-for.sh" ||
     fail "perturbation $perturbed did not change the waiter: $anchor"
 
+  child_log="$TMP_ROOT/perturbed.$perturbed.log"
   if FM_WAIT_FOR_ONLY_CASE="$case_name" FM_WAIT_FOR_WAITER="$copy" \
-    FM_TEST_SKIP_ORPHAN_REAP=1 bash "${BASH_SOURCE[0]}" > /dev/null 2>&1; then
+    FM_TEST_SKIP_ORPHAN_REAP=1 bash "${BASH_SOURCE[0]}" > "$child_log" 2>&1; then
     fail "$case_name still passes with the waiter broken so that $meaning"
   fi
-  pass "$case_name fails when $meaning"
+  grep -Fqx -- "case-assertion-failed $case_name" "$child_log" ||
+    fail "$case_name exited nonzero without failing its own assertion under the break that $meaning, so the kill is unattributed: $(tr '\n' ' ' < "$child_log")"
+  pass "$case_name fails its own assertion when $meaning"
   perturbed=$((perturbed + 1))
 done < <(perturbations)
 
-[ "$perturbed" -eq 12 ] ||
-  fail "expected 12 perturbations to run, ran $perturbed"
+[ "$perturbed" -eq 15 ] ||
+  fail "expected 15 perturbations to run, ran $perturbed"
 pass "every case above is proven able to fail"
