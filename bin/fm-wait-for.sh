@@ -91,17 +91,20 @@ while [ "$#" -gt 0 ]; do
       ;;
     --pid)
       [ "$#" -gt 1 ] || die_usage "--pid requires a process id"
+      [ -n "$2" ] || die_usage "--pid requires a process id, not an empty value"
       PID=$2
       shift 2
       ;;
     --file)
       [ "$#" -gt 1 ] || die_usage "--file requires a path"
+      [ -n "$2" ] || die_usage "--file requires a path, not an empty value"
       FILE=$2
       FILE_SET=1
       shift 2
       ;;
     --marker)
       [ "$#" -gt 1 ] || die_usage "--marker requires a string"
+      [ -n "$2" ] || die_usage "--marker requires a string, not an empty value"
       MARKER=$2
       shift 2
       ;;
@@ -164,8 +167,9 @@ while :; do
     [ "$QUIET" -eq 1 ] || printf 'fm-wait-for: satisfied after %ss\n' "$(( $(date +%s) - STARTED ))"
     exit 0
   fi
-  if [ "$(( $(date +%s) - STARTED ))" -ge "$TIMEOUT" ]; then
-    printf 'fm-wait-for: TIMED OUT after %ss\n' "$TIMEOUT" >&2
+  elapsed=$(( $(date +%s) - STARTED ))
+  if [ "$elapsed" -ge "$TIMEOUT" ]; then
+    printf 'fm-wait-for: TIMED OUT after %ss\n' "$elapsed" >&2
     if [ -n "$PID" ]; then
       if kill -0 "$PID" 2>/dev/null; then
         printf '  pid %s still alive\n' "$PID" >&2

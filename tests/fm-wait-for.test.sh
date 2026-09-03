@@ -213,9 +213,34 @@ case_immune_to_a_self_matching_caller() {
   pass "a caller whose own command line contains the waited-on text gets the truth"
 }
 
+# An empty value is the same fault the waiter exists to remove, arriving through
+# a shell expansion instead of a pattern: --pid "$WORKER_PID" where WORKER_PID
+# was set in a subshell silently drops that half of the condition.
+case_refuses_empty_flag_values() {
+  local dead log r
+  dead=$(spawn_sleeper)
+  reap "$dead"
+  log="$TMP_ROOT/empty-value.$$.log"
+  printf '%s\n' "$MARKER" > "$log"
+
+  r=$(run_waiter --marker '' --pid "$dead" --timeout 0)
+  [ "$(rc_of "$r")" = 2 ] ||
+    fail "an empty --marker must be refused, not dropped beside a satisfiable --pid (rc=$(rc_of "$r"))"
+
+  r=$(run_waiter --pid '' --marker "$MARKER" --file "$log" --timeout 0)
+  [ "$(rc_of "$r")" = 2 ] ||
+    fail "an empty --pid must be refused, not dropped beside a satisfiable --marker (rc=$(rc_of "$r"))"
+
+  r=$(run_waiter --marker "$MARKER" --file '' --timeout 0)
+  [ "$(rc_of "$r")" = 2 ] ||
+    fail "an empty --file must be refused (rc=$(rc_of "$r"))"
+  pass "an empty flag value is a usage error, never a condition silently dropped"
+}
+
 CASES=(
   case_refuses_pattern_shaped_arguments
   case_refuses_a_wait_with_no_condition
+  case_refuses_empty_flag_values
   case_live_pid_times_out_and_exited_pid_satisfies
   case_absent_marker_times_out_and_written_marker_satisfies
   case_pid_and_marker_together_require_both
@@ -264,6 +289,21 @@ case_live_pid_times_out_and_exited_pid_satisfies
     exit 1
     exit 0
 giving up waiting is reported as success, collapsing the distinction the waiter owes
+--
+case_pid_and_marker_together_require_both
+  if [ "$satisfied" -eq 1 ]; then
+  if [ "$satisfied" -eq 1 ] || { [ -n "$MARKER" ] && marker_present; }; then
+the two conditions degrade from AND to OR, so a live process with a marker already written satisfies the wait
+--
+case_immune_to_a_self_matching_caller
+  grep -qsF -- "$MARKER" "$FILE"
+  pgrep -f "$MARKER" > /dev/null 2>&1
+the marker check answers from the process table instead of the artifact, so a self-matching caller matches itself
+--
+case_refuses_empty_flag_values
+      [ -n "$2" ] || die_usage "--pid requires a process id, not an empty value"
+      :
+an empty flag value is admitted again, so half the condition is dropped and never checked
 RECORDS
 }
 
@@ -290,6 +330,6 @@ while IFS= read -r case_name && IFS= read -r anchor && IFS= read -r replacement 
   perturbed=$((perturbed + 1))
 done < <(perturbations)
 
-[ "$perturbed" -eq 5 ] ||
-  fail "expected 5 perturbations to run, ran $perturbed"
+[ "$perturbed" -eq 8 ] ||
+  fail "expected 8 perturbations to run, ran $perturbed"
 pass "every case above is proven able to fail"
