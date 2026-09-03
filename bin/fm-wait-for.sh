@@ -45,9 +45,25 @@
 #                  actually write the marker, a stale marker left by an earlier
 #                  run satisfies the wait immediately, and a file that does not
 #                  exist yet counts as not finished rather than as an error. A
-#                  marker with no content of its own is refused rather than
-#                  waited on, because an empty or entirely-whitespace marker
-#                  matches the first line of any log and reports success at once.
+#                  marker that cannot honestly be matched is refused rather than
+#                  waited on: an empty or entirely-whitespace one matches the
+#                  first line of any log, and a multi-line one is read by grep
+#                  -F as ALTERNATIVES, so it would be satisfied by any ONE of
+#                  its lines. A marker that merely contains spaces is the normal
+#                  case and stays acceptable.
+#
+# OPTIONS AND THEIR DEFAULTS
+# --------------------------
+#   --timeout <s>  whole seconds to wait before giving up, default 3600, which
+#                  is a silent ONE HOUR. Pass it explicitly: this tool exists
+#                  because an hour of dead waiting was the original fault.
+#                  --timeout 0 is legal and means a single probe, no waiting.
+#   --interval <s> whole seconds between probes, default 5, and it must be above
+#                  zero. A fractional value such as 0.5 is a usage error rather
+#                  than something rounded silently.
+#   --quiet        suppress the "satisfied" line on success. The TIMED OUT
+#                  banner and its diagnostics are never suppressed, because a
+#                  wait that gave up must always say so.
 #
 # Give both and the wait is satisfied only when the pid has exited AND the
 # marker is present, which is the honest condition for "the work finished, and
@@ -78,13 +94,15 @@ positive_int() {
   esac
 }
 
-# True when the value carries at least one non-whitespace character. A marker
-# that merely CONTAINS whitespace is the normal case ("all checks passed") and
-# stays acceptable; only one made entirely of whitespace has nothing to match on.
-has_content() {
-  case ${1-} in
+# The one place --marker is validated. It refuses only the shapes grep -F cannot
+# honestly check: a value with no content of its own, and a multi-line value,
+# which grep -F reads as ALTERNATIVES so any ONE line would satisfy the wait. A
+# marker that merely CONTAINS spaces is the primary use ("all checks passed").
+check_marker() {
+  case $1 in
+    *$'\n'*) die_usage "--marker must be a single line, because grep -F reads a newline as OR: a multi-line marker is satisfied by ANY one of its lines" ;;
     *[![:space:]]*) return 0 ;;
-    *) return 1 ;;
+    *) die_usage "--marker requires a string with content, not an empty or whitespace-only value" ;;
   esac
 }
 
@@ -117,7 +135,7 @@ while [ "$#" -gt 0 ]; do
       ;;
     --marker)
       [ "$#" -gt 1 ] || die_usage "--marker requires a string"
-      has_content "$2" || die_usage "--marker requires a string with content, not an empty or whitespace-only value"
+      check_marker "$2"
       MARKER=$2
       shift 2
       ;;

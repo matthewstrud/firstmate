@@ -252,13 +252,14 @@ case_refuses_empty_flag_values() {
   pass "an empty flag value is a usage error, never a condition silently dropped"
 }
 
-# A whitespace-only marker is the empty-value fault wearing a disguise: it
-# passes a non-empty test and then matches the first log line containing a
-# space. Guarding it must not cost the primary use, a multi-word marker.
-case_refuses_a_whitespace_only_marker_but_keeps_multi_word_markers() {
+# The marker shapes grep -F cannot honestly check. A whitespace-only marker
+# matches the first log line carrying a space, and a multi-line marker is read
+# as ALTERNATIVES so its FIRST line alone satisfies the wait while the work is
+# half done. Refusing them must not cost the primary use, a multi-word marker.
+case_refuses_unusable_markers_but_keeps_multi_word_markers() {
   local log r
-  log="$TMP_ROOT/whitespace.$$.log"
-  printf 'starting the run now\nstill going\n' > "$log"
+  log="$TMP_ROOT/marker-shapes.$$.log"
+  printf 'starting the run now\nmigrations applied\n' > "$log"
 
   r=$(run_waiter --marker ' ' --file "$log" --timeout 0)
   [ "$(rc_of "$r")" = 2 ] ||
@@ -268,6 +269,10 @@ case_refuses_a_whitespace_only_marker_but_keeps_multi_word_markers() {
   [ "$(rc_of "$r")" = 2 ] ||
     fail_case "a whitespace-only --marker must be refused whatever the whitespace is (rc=$(rc_of "$r"))"
 
+  r=$(run_waiter --marker "$(printf 'migrations applied\n%s' "$MARKER")" --file "$log" --timeout 0)
+  [ "$(rc_of "$r")" = 2 ] ||
+    fail_case "a multi-line --marker must be refused, not satisfied by its first line alone (rc=$(rc_of "$r"))"
+
   r=$(run_waiter --marker "$MARKER" --file "$log" --timeout 0)
   [ "$(rc_of "$r")" = 1 ] ||
     fail_case "a multi-word marker must stay accepted and read as unfinished, got rc=$(rc_of "$r"): $(out_of "$r")"
@@ -276,14 +281,46 @@ case_refuses_a_whitespace_only_marker_but_keeps_multi_word_markers() {
   r=$(run_waiter --marker "$MARKER" --file "$log" --timeout 0)
   [ "$(rc_of "$r")" = 0 ] ||
     fail_case "a multi-word marker must still satisfy once written, got rc=$(rc_of "$r"): $(out_of "$r")"
-  pass "only an entirely-whitespace marker is refused; a multi-word marker keeps working"
+  pass "empty, whitespace-only and multi-line markers are refused; a multi-word marker keeps working"
+}
+
+# --help is the only documentation crews get, so its rendered CONTENT is the
+# contract. An empty or truncated render still exits 0, which is why the exit
+# status alone proves nothing.
+case_help_states_the_contract_the_limits_and_the_defaults() {
+  local help rc
+  help=$(bash "$WAITER" --help 2>&1)
+  rc=$?
+  [ "$rc" = 0 ] || fail_case "--help must exit 0, got rc=$rc"
+  case $help in
+    *"accepts no pattern flag"*) ;;
+    *) fail_case "--help must state the pattern-free contract: $help" ;;
+  esac
+  case $help in
+    *"The kernel recycles pids"*) ;;
+    *) fail_case "--help must state the honest limit of --pid: $help" ;;
+  esac
+  case $help in
+    *"a stale marker left by an earlier"*) ;;
+    *) fail_case "--help must state the honest limits of --marker: $help" ;;
+  esac
+  case $help in
+    *"default 3600"*) ;;
+    *) fail_case "--help must state the --timeout default so nobody waits an hour by accident: $help" ;;
+  esac
+  case $help in
+    *"the honest condition for"*) ;;
+    *) fail_case "--help must render through to the end of its header: $help" ;;
+  esac
+  pass "--help states the pattern-free contract, both modes' limits, and the defaults"
 }
 
 CASES=(
   case_refuses_pattern_shaped_arguments
   case_refuses_a_wait_with_no_condition
   case_refuses_empty_flag_values
-  case_refuses_a_whitespace_only_marker_but_keeps_multi_word_markers
+  case_refuses_unusable_markers_but_keeps_multi_word_markers
+  case_help_states_the_contract_the_limits_and_the_defaults
   case_live_pid_times_out_and_exited_pid_satisfies
   case_absent_marker_times_out_and_written_marker_satisfies
   case_pid_and_marker_together_require_both
@@ -356,19 +393,34 @@ case_refuses_empty_flag_values
 an empty --file is admitted again, so the marker is looked for in a path that names nothing
 --
 case_refuses_empty_flag_values
-      has_content "$2" || die_usage "--marker requires a string with content, not an empty or whitespace-only value"
-      :
+    *) die_usage "--marker requires a string with content, not an empty or whitespace-only value" ;;
+    *) : ;;
 an empty --marker is admitted again, so that half of the condition is dropped and never checked
 --
-case_refuses_a_whitespace_only_marker_but_keeps_multi_word_markers
-      has_content "$2" || die_usage "--marker requires a string with content, not an empty or whitespace-only value"
-      :
+case_refuses_unusable_markers_but_keeps_multi_word_markers
+    *) die_usage "--marker requires a string with content, not an empty or whitespace-only value" ;;
+    *) : ;;
 a whitespace-only marker is admitted and then matches the first log line carrying a space
 --
-case_refuses_a_whitespace_only_marker_but_keeps_multi_word_markers
-      has_content "$2" || die_usage "--marker requires a string with content, not an empty or whitespace-only value"
-      case $2 in *[[:space:]]*) die_usage "--marker requires a string with content, not an empty or whitespace-only value" ;; esac
+case_refuses_unusable_markers_but_keeps_multi_word_markers
+    *$'\n'*) die_usage "--marker must be a single line, because grep -F reads a newline as OR: a multi-line marker is satisfied by ANY one of its lines" ;;
+    *$'\n'*) : ;;
+a multi-line marker is admitted and grep -F then satisfies the wait on its first line alone
+--
+case_refuses_unusable_markers_but_keeps_multi_word_markers
+    *[![:space:]]*) return 0 ;;
+    *[[:space:]]*) die_usage "--marker must not contain whitespace" ;;
 the guard widens from whitespace-only to whitespace-containing, refusing the multi-word markers that are the point
+--
+case_help_states_the_contract_the_limits_and_the_defaults
+# fm-wait-for.sh - wait for work to FINISH without ever asking "is a process
+
+--help renders empty because a non-comment line now sits where the header began
+--
+case_help_states_the_contract_the_limits_and_the_defaults
+# marker is present, which is the honest condition for "the work finished, and
+:
+--help renders truncated, losing the tail of the header it is supposed to carry
 --
 case_refuses_pattern_shaped_arguments
   printf 'Wait with --pid <n> (one process by identity) and/or --marker <string> --file <path>\n' >&2
@@ -413,6 +465,6 @@ while IFS= read -r case_name && IFS= read -r anchor && IFS= read -r replacement 
   perturbed=$((perturbed + 1))
 done < <(perturbations)
 
-[ "$perturbed" -eq 15 ] ||
-  fail "expected 15 perturbations to run, ran $perturbed"
+[ "$perturbed" -eq 18 ] ||
+  fail "expected 18 perturbations to run, ran $perturbed"
 pass "every case above is proven able to fail"
