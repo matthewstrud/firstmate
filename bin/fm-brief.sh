@@ -358,6 +358,14 @@ The report is the only thing that survives, so anything worth keeping must be in
 7. Never stop, restart, or update the shared \`no-mistakes\` daemon - it is one instance serving
    every lane/home, so restarting it kills other lanes' in-flight pipeline runs. On ANY no-mistakes
    daemon error, append \`blocked: {the daemon error}\` and stop; only firstmate manages the daemon.
+8. Never wait on a process-name pattern (\`pgrep -f X\`, \`ps | grep X\`, or the \`[X]\` bracket idiom).
+   Run inside a shell whose own command line contains X, the check matches itself, so the wait
+   never ends and reports a phantom process forever. No pattern is safe, because anything that
+   quotes your command shares the pattern space. Wait with \`$FM_ROOT/bin/fm-wait-for.sh\` instead:
+   \`--pid <n>\` for a process you launched yourself, or \`--marker <string> --file <path>\` for a
+   fixed string the work writes when it is done. Prefer the marker for anything long - it watches
+   the artifact, so it survives the process dying, restarting, or being wrapped in shell.
+   See \`$FM_ROOT/bin/fm-wait-for.sh --help\` for the honest limits of each mode.
 
 $INBOX_SECTION
 
@@ -437,6 +445,14 @@ $RULE1
 7. Never stop, restart, or update the shared \`no-mistakes\` daemon - it is one instance serving
    every lane/home, so restarting it kills other lanes' in-flight pipeline runs. On ANY no-mistakes
    daemon error, append \`blocked: {the daemon error}\` and stop; only firstmate manages the daemon.
+8. Never wait on a process-name pattern (\`pgrep -f X\`, \`ps | grep X\`, or the \`[X]\` bracket idiom).
+   Run inside a shell whose own command line contains X, the check matches itself, so the wait
+   never ends and reports a phantom process forever. No pattern is safe, because anything that
+   quotes your command shares the pattern space. Wait with \`$FM_ROOT/bin/fm-wait-for.sh\` instead:
+   \`--pid <n>\` for a process you launched yourself, or \`--marker <string> --file <path>\` for a
+   fixed string the work writes when it is done. Prefer the marker for anything long - it watches
+   the artifact, so it survives the process dying, restarting, or being wrapped in shell.
+   See \`$FM_ROOT/bin/fm-wait-for.sh --help\` for the honest limits of each mode.
 
 $INBOX_SECTION
 
