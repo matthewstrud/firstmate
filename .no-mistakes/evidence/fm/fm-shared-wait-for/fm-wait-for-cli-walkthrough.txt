@@ -1,0 +1,132 @@
+
+### 1. The old fault, reproduced: a wait loop that can never end
+$ bash -c "... run the city generator ..."   # caller quotes the text it waits on
+STILL_RUNNING after 3 probes - and it will never stop
+[exit 1]  <- no work is running at all; the shell matched ITSELF
+
+### 2. The same situation with fm-wait-for.sh: no pattern, so no phantom
+$ bash -c "fm-wait-for.sh --marker CITY_DONE --file city.log --timeout 2 --interval 1 # run the city generator"
+fm-wait-for: TIMED OUT after 2s
+  marker ABSENT in /tmp/tmp.Vm8ctD306w/city.log
+[exit 1]  <- gave up waiting, and SAYS so
+
+$ echo CITY_DONE >> city.log        # the work finishes and writes its marker
+$ bash -c "fm-wait-for.sh --marker CITY_DONE --file city.log --timeout 10 --interval 1 # run the city generator"
+fm-wait-for: satisfied after 0s
+[exit 0]  <- the condition happened; distinct from the 1 above
+
+### 3. Waiting on one process by identity
+$ fm-wait-for.sh --pid 627011 --timeout 2 --interval 1     # while it runs
+fm-wait-for: TIMED OUT after 2s
+  pid 627011 still alive
+[exit 1]
+
+$ fm-wait-for.sh --pid 627011 --timeout 5 --interval 1     # after it exits
+fm-wait-for: satisfied after 0s
+[exit 0]
+
+### 4. Passing it a pattern is structurally impossible
+$ fm-wait-for.sh --pattern pytest
+fm-wait-for.sh: unknown argument '--pattern'
+Wait with --pid <n> (one process by identity) and/or --marker <string> --file <path>
+(a fixed string the work writes when done). There is deliberately no pattern mode:
+a process-name pattern matches the very shell doing the waiting, so the wait never
+ends. Run fm-wait-for.sh --help for the full reason.
+[exit 2]
+
+$ fm-wait-for.sh --match pytest
+fm-wait-for.sh: unknown argument '--match'
+Wait with --pid <n> (one process by identity) and/or --marker <string> --file <path>
+(a fixed string the work writes when done). There is deliberately no pattern mode:
+a process-name pattern matches the very shell doing the waiting, so the wait never
+ends. Run fm-wait-for.sh --help for the full reason.
+[exit 2]
+
+$ fm-wait-for.sh --name pytest
+fm-wait-for.sh: unknown argument '--name'
+Wait with --pid <n> (one process by identity) and/or --marker <string> --file <path>
+(a fixed string the work writes when done). There is deliberately no pattern mode:
+a process-name pattern matches the very shell doing the waiting, so the wait never
+ends. Run fm-wait-for.sh --help for the full reason.
+[exit 2]
+
+$ fm-wait-for.sh pytest
+fm-wait-for.sh: unknown argument 'pytest'
+Wait with --pid <n> (one process by identity) and/or --marker <string> --file <path>
+(a fixed string the work writes when done). There is deliberately no pattern mode:
+a process-name pattern matches the very shell doing the waiting, so the wait never
+ends. Run fm-wait-for.sh --help for the full reason.
+[exit 2]
+
+
+### 5. --help: the contract and the honest limits of each mode
+$ fm-wait-for.sh --help
+fm-wait-for.sh - wait for work to FINISH without ever asking "is a process
+matching X still alive?".
+
+Usage:
+  fm-wait-for.sh --pid <n> [--timeout <s>] [--interval <s>] [--quiet]
+  fm-wait-for.sh --marker <string> --file <path> [--timeout <s>] ...
+  fm-wait-for.sh --pid <n> --marker <string> --file <path> [...]
+
+Exit status: 0 the condition happened, 1 gave up waiting (timeout),
+2 usage error. A waiter that cannot tell success from timeout recreates the
+fault this script exists to remove, so those two are never merged.
+
+WHY THIS SCRIPT OFFERS NO PATTERN MODE
+-------------------------------------
+`pgrep -f "X"` run inside a shell whose own command line contains X matches
+ITSELF, so the wait loop never breaks and every later check reports a phantom
+process. On 2026-09-03 that shape cost three separate crews about an hour of
+dead waiting in one morning: one waited out a full timeout after its work had
+already finished, and a test watcher would have reported the suite running
+forever after it had exited.
+
+The "clever" bracket idiom `pgrep -f "[X]..."` was tried as an earlier fix and
+was defeated too. It only stops pgrep matching its own command line, and a
+supervising agent's command line can quote a whole command inside a task
+prompt, so a third process matches anyway. No pattern is safe, because the
+pattern space is shared with anything that can quote it. The fix is therefore
+to remove the mode, not to warn about it: this script accepts no pattern flag
+and no positional argument, and refuses anything it does not recognise.
+
+THE TWO HONEST CHECKS, AND THEIR LIMITS
+---------------------------------------
+  --pid <n>      `kill -0 <n>`: ask the kernel about ONE process by identity,
+                 with no pattern anywhere. Satisfied when that pid is gone.
+                 Limits, stated rather than hidden: it is only valid for a pid
+                 you launched and still own. The kernel recycles pids, so a
+                 long wait can be answered by an unrelated process that
+                 inherited the number. A pid owned by another user reads as
+                 gone, because the permission error is indistinguishable here
+                 from "no such process". Prefer --marker for anything long.
+  --marker <s>   wait for a fixed string the work writes to --file when it is
+    --file <p>   DONE. This watches the ARTIFACT rather than the process, so it
+                 survives the process dying, restarting under a new pid, or
+                 being wrapped in layers of shell. Limits: the work has to
+                 actually write the marker, a stale marker left by an earlier
+                 run satisfies the wait immediately, and a file that does not
+                 exist yet counts as not finished rather than as an error. A
+                 marker that cannot honestly be matched is refused rather than
+                 waited on: an empty or entirely-whitespace one matches the
+                 first line of any log, and a multi-line one is read by grep
+                 -F as ALTERNATIVES, so it would be satisfied by any ONE of
+                 its lines. A marker that merely contains spaces is the normal
+                 case and stays acceptable.
+
+OPTIONS AND THEIR DEFAULTS
+--------------------------
+  --timeout <s>  whole seconds to wait before giving up, default 3600, which
+                 is a silent ONE HOUR. Pass it explicitly: this tool exists
+                 because an hour of dead waiting was the original fault.
+                 --timeout 0 is legal and means a single probe, no waiting.
+  --interval <s> whole seconds between probes, default 5, and it must be above
+                 zero. A fractional value such as 0.5 is a usage error rather
+                 than something rounded silently.
+  --quiet        suppress the "satisfied" line on success. The TIMED OUT
+                 banner and its diagnostics are never suppressed, because a
+                 wait that gave up must always say so.
+
+Give both and the wait is satisfied only when the pid has exited AND the
+marker is present, which is the honest condition for "the work finished, and
+finished properly".

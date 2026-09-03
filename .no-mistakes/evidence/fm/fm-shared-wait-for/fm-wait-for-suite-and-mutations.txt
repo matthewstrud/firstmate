@@ -1,0 +1,46 @@
+$ bash tests/fm-wait-for.test.sh    (exit 0)
+
+The 12 clean-run assertions, then the committed mutation harness: for each of 18
+recorded breaks it copies the waiter, applies the break, re-runs the ONE case that
+break should defeat, and fails if that case still passes. Every run re-proves that
+every check can fail.
+
+ok - pattern-shaped flags are refused even when another condition would succeed
+ok - there is no positional fallback a pattern could arrive through
+ok - the refusal names the two supported modes and explains why patterns are absent
+ok - a wait with nothing to wait for is refused rather than satisfied instantly
+ok - an empty flag value is a usage error, never a condition silently dropped
+ok - empty, whitespace-only and multi-line markers are refused; a multi-word marker keeps working
+ok - --help states the pattern-free contract, both modes' limits, and the defaults
+ok - --pid tells a running process from an exited one, and timeout from success
+ok - --marker watches the artifact and tells unfinished from finished
+ok - given both, the wait needs the process gone AND the artifact finished
+ok - fixture confirmed: a pattern check from this caller reports 1 phantom process(es)
+ok - a caller whose own command line contains the waited-on text gets the truth
+ok - case_absent_marker_times_out_and_written_marker_satisfies fails its own assertion when the marker check can no longer say no, so a barely-started run satisfies the wait
+ok - case_live_pid_times_out_and_exited_pid_satisfies fails its own assertion when the waiter stops asking the kernel about the pid, so a live process reads as gone
+ok - case_refuses_a_wait_with_no_condition fails its own assertion when a wait with no condition is admitted and then satisfied instantly and silently
+ok - case_refuses_pattern_shaped_arguments fails its own assertion when an unrecognised argument is skipped, so a caller's pattern is silently ignored
+ok - case_live_pid_times_out_and_exited_pid_satisfies fails its own assertion when giving up waiting is reported as success, collapsing the distinction the waiter owes
+ok - case_pid_and_marker_together_require_both fails its own assertion when the two conditions degrade from AND to OR, so a live process with a marker already written satisfies the wait
+ok - case_immune_to_a_self_matching_caller fails its own assertion when the marker check answers from the process table instead of the artifact, so a self-matching caller matches itself
+ok - case_refuses_empty_flag_values fails its own assertion when an empty --pid is admitted again, so that half of the condition is dropped and never checked
+ok - case_refuses_empty_flag_values fails its own assertion when an empty --file is admitted again, so the marker is looked for in a path that names nothing
+ok - case_refuses_empty_flag_values fails its own assertion when an empty --marker is admitted again, so that half of the condition is dropped and never checked
+ok - case_refuses_unusable_markers_but_keeps_multi_word_markers fails its own assertion when a whitespace-only marker is admitted and then matches the first log line carrying a space
+ok - case_refuses_unusable_markers_but_keeps_multi_word_markers fails its own assertion when a multi-line marker is admitted and grep -F then satisfies the wait on its first line alone
+ok - case_refuses_unusable_markers_but_keeps_multi_word_markers fails its own assertion when the guard widens from whitespace-only to whitespace-containing, refusing the multi-word markers that are the point
+ok - case_help_states_the_contract_the_limits_and_the_defaults fails its own assertion when --help renders empty because a non-comment line now sits where the header began
+ok - case_help_states_the_contract_the_limits_and_the_defaults fails its own assertion when --help renders truncated, losing the tail of the header it is supposed to carry
+ok - case_refuses_pattern_shaped_arguments fails its own assertion when the refusal stops naming the two modes a caller should have used instead
+ok - case_refuses_pattern_shaped_arguments fails its own assertion when the refusal stops stating that no pattern mode is offered at all
+ok - case_refuses_pattern_shaped_arguments fails its own assertion when the refusal stops explaining why patterns are not offered, leaving a bare rejection
+ok - every case above is proven able to fail
+
+==================================================================
+The harness's own stale-anchor guard, proven able to fail:
+(scratch copy of the test with one perturbation anchor edited as a refactor would;
+ scratch file deleted afterwards, worktree left clean)
+==================================================================
+not ok - perturbation anchor no longer exists in bin/fm-wait-for.sh, so it would mutate nothing:   grep -qsF -- "$MARKER" "$FILE"   # ANCHOR MOVED BY A REFACTOR
+[exit 1]

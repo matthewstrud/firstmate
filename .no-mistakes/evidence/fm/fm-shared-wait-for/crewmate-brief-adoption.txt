@@ -1,0 +1,35 @@
+Generated crewmate briefs - the adoption surface a crew actually reads.
+Produced by: bin/fm-brief.sh <id> firstmate --mode no-mistakes | --scout
+
+==================================================================
+  ship brief (/tmp/tmp.rA3GyVkl5q/data/demo-ship/brief.md) - rule 8, verbatim
+==================================================================
+8. Never wait on a process-name pattern (`pgrep -f X`, `ps | grep X`, or the `[X]` bracket idiom).
+   Run inside a shell whose own command line contains X, the check matches itself, so the wait
+   never ends and reports a phantom process forever. No pattern is safe, because anything that
+   quotes your command shares the pattern space. Wait with `/home/mosaic/.no-mistakes/worktrees/cab7c281f0e7/01M1KFSJ102FDTXJHEA42B19PY/bin/fm-wait-for.sh` instead:
+   `--pid <n>` for a process you launched yourself, or `--marker <string> --file <path>` for a
+   fixed string the work writes when it is done. Prefer the marker for anything long - it watches
+   the artifact, so it survives the process dying, restarting, or being wrapped in shell.
+   See `/home/mosaic/.no-mistakes/worktrees/cab7c281f0e7/01M1KFSJ102FDTXJHEA42B19PY/bin/fm-wait-for.sh --help` for the honest limits of each mode.
+
+==================================================================
+  scout brief (/tmp/tmp.rA3GyVkl5q/data/demo-scout/brief.md) - rule 8, verbatim
+==================================================================
+8. Never wait on a process-name pattern (`pgrep -f X`, `ps | grep X`, or the `[X]` bracket idiom).
+   Run inside a shell whose own command line contains X, the check matches itself, so the wait
+   never ends and reports a phantom process forever. No pattern is safe, because anything that
+   quotes your command shares the pattern space. Wait with `/home/mosaic/.no-mistakes/worktrees/cab7c281f0e7/01M1KFSJ102FDTXJHEA42B19PY/bin/fm-wait-for.sh` instead:
+   `--pid <n>` for a process you launched yourself, or `--marker <string> --file <path>` for a
+   fixed string the work writes when it is done. Prefer the marker for anything long - it watches
+   the artifact, so it survives the process dying, restarting, or being wrapped in shell.
+   See `/home/mosaic/.no-mistakes/worktrees/cab7c281f0e7/01M1KFSJ102FDTXJHEA42B19PY/bin/fm-wait-for.sh --help` for the honest limits of each mode.
+
+==================================================================
+  The path the brief names, invoked as a crewmate would:
+==================================================================
+$ /home/mosaic/.no-mistakes/worktrees/cab7c281f0e7/01M1KFSJ102FDTXJHEA42B19PY/bin/fm-wait-for.sh --help | head -3
+fm-wait-for.sh - wait for work to FINISH without ever asking "is a process
+matching X still alive?".
+
+[exit 0]

@@ -1,0 +1,34 @@
+Edge cases from the design decisions the author recorded, exercised directly.
+
+--- --interval must be a whole number above zero ---
+$ fm-wait-for.sh --pid 1 --interval 0.5
+fm-wait-for.sh: --interval must be whole seconds above zero, not '0.5'
+  [exit 2]
+
+$ fm-wait-for.sh --pid 1 --interval 0
+fm-wait-for.sh: --interval must be whole seconds above zero, not '0'
+  [exit 2]
+
+--- --marker and --file are required together (a deliberate divergence from the reference) ---
+$ fm-wait-for.sh --marker done --timeout 1
+fm-wait-for.sh: --marker needs --file naming the file the marker is written to
+  [exit 2]
+
+$ fm-wait-for.sh --file /tmp/x --timeout 1
+fm-wait-for.sh: nothing to wait for
+  [exit 2]
+
+--- a wait with no condition is refused, not satisfied instantly ---
+$ fm-wait-for.sh --timeout 1
+fm-wait-for.sh: nothing to wait for
+  [exit 2]
+
+--- --timeout 0 is legal and means a single probe, no waiting ---
+$ fm-wait-for.sh --marker READY --file <log CONTAINING the marker> --timeout 0
+fm-wait-for: satisfied after 0s
+  [exit 0]  (wall 0s - it did not wait)
+
+$ fm-wait-for.sh --marker READY --file <log WITHOUT the marker> --timeout 0
+fm-wait-for: TIMED OUT after 0s
+  marker ABSENT in /tmp/tmp.zMMGtO8LOU
+  [exit 1]
