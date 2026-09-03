@@ -56,10 +56,10 @@ fail_case() {
 }
 
 # spawn_sleeper: start a long-lived process we own and echo its pid.
-# The redirects matter: without them the sleeper inherits the command
+# The stdout redirect matters: without it the sleeper inherits the command
 # substitution's pipe and $(spawn_sleeper) blocks until the sleeper exits.
 spawn_sleeper() {
-  sleep 300 > /dev/null 2>&1 < /dev/null &
+  sleep 300 > /dev/null 2>&1 &
   printf '%s\n' "$!"
 }
 
@@ -206,7 +206,7 @@ case_immune_to_a_self_matching_caller() {
   # a pattern check reports processes that are not the work. Without this the
   # case below could pass vacuously against a harmless fixture.
   if command -v pgrep > /dev/null 2>&1; then
-    phantoms=$(bash -c "pgrep -f 'fm-wait-for-selfmatch-$$' 2>/dev/null | wc -l | tr -d ' '")
+    phantoms=$(bash -c "pgrep -f '$token' 2>/dev/null | wc -l | tr -d ' '")
     [ "${phantoms:-0}" -ge 1 ] ||
       fail "fixture is not reproducing the fault: a pattern check found no phantom"
     pass "fixture confirmed: a pattern check from this caller reports $phantoms phantom process(es)"
@@ -214,15 +214,15 @@ case_immune_to_a_self_matching_caller() {
 
   # Same self-matching caller, the pattern-free waiter: it must still tell the
   # truth in both directions, because it never looks at a command line.
-  printf 'working on fm-wait-for-selfmatch-%s\n' "$$" > "$log"
-  r=$(bash -c "bash '$WAITER' --marker 'fm-wait-for-selfmatch-$$-done' --file '$log' --timeout 1 --interval 1 2>&1; printf '%s' \$?")
+  printf 'working on %s\n' "$token" > "$log"
+  r=$(bash -c "bash '$WAITER' --marker '$token-done' --file '$log' --timeout 1 --interval 1 2>&1; printf '%s' \$?")
   case $r in
     *1) ;;
     *) fail_case "unfinished work must still time out for a self-matching caller: $r" ;;
   esac
 
-  printf 'fm-wait-for-selfmatch-%s-done\n' "$$" >> "$log"
-  r=$(bash -c "bash '$WAITER' --marker 'fm-wait-for-selfmatch-$$-done' --file '$log' --timeout 5 --interval 1 --quiet 2>&1; printf '%s' \$?")
+  printf '%s-done\n' "$token" >> "$log"
+  r=$(bash -c "bash '$WAITER' --marker '$token-done' --file '$log' --timeout 5 --interval 1 --quiet 2>&1; printf '%s' \$?")
   [ "$r" = 0 ] ||
     fail_case "finished work must satisfy the wait for a self-matching caller: $r"
   pass "a caller whose own command line contains the waited-on text gets the truth"
