@@ -237,10 +237,38 @@ case_refuses_empty_flag_values() {
   pass "an empty flag value is a usage error, never a condition silently dropped"
 }
 
+# A whitespace-only marker is the empty-value fault wearing a disguise: it
+# passes a non-empty test and then matches the first log line containing a
+# space. Guarding it must not cost the primary use, a multi-word marker.
+case_refuses_a_whitespace_only_marker_but_keeps_multi_word_markers() {
+  local log r
+  log="$TMP_ROOT/whitespace.$$.log"
+  printf 'starting the run now\nstill going\n' > "$log"
+
+  r=$(run_waiter --marker ' ' --file "$log" --timeout 0)
+  [ "$(rc_of "$r")" = 2 ] ||
+    fail "a space-only --marker must be refused, not matched against the first line with a space (rc=$(rc_of "$r"))"
+
+  r=$(run_waiter --marker "$(printf '\t ')" --file "$log" --timeout 0)
+  [ "$(rc_of "$r")" = 2 ] ||
+    fail "a whitespace-only --marker must be refused whatever the whitespace is (rc=$(rc_of "$r"))"
+
+  r=$(run_waiter --marker "$MARKER" --file "$log" --timeout 0)
+  [ "$(rc_of "$r")" = 1 ] ||
+    fail "a multi-word marker must stay accepted and read as unfinished, got rc=$(rc_of "$r"): $(out_of "$r")"
+
+  printf '%s\n' "$MARKER" >> "$log"
+  r=$(run_waiter --marker "$MARKER" --file "$log" --timeout 0)
+  [ "$(rc_of "$r")" = 0 ] ||
+    fail "a multi-word marker must still satisfy once written, got rc=$(rc_of "$r"): $(out_of "$r")"
+  pass "only an entirely-whitespace marker is refused; a multi-word marker keeps working"
+}
+
 CASES=(
   case_refuses_pattern_shaped_arguments
   case_refuses_a_wait_with_no_condition
   case_refuses_empty_flag_values
+  case_refuses_a_whitespace_only_marker_but_keeps_multi_word_markers
   case_live_pid_times_out_and_exited_pid_satisfies
   case_absent_marker_times_out_and_written_marker_satisfies
   case_pid_and_marker_together_require_both
@@ -303,7 +331,27 @@ the marker check answers from the process table instead of the artifact, so a se
 case_refuses_empty_flag_values
       [ -n "$2" ] || die_usage "--pid requires a process id, not an empty value"
       :
-an empty flag value is admitted again, so half the condition is dropped and never checked
+an empty --pid is admitted again, so that half of the condition is dropped and never checked
+--
+case_refuses_empty_flag_values
+      [ -n "$2" ] || die_usage "--file requires a path, not an empty value"
+      :
+an empty --file is admitted again, so the marker is looked for in a path that names nothing
+--
+case_refuses_empty_flag_values
+      has_content "$2" || die_usage "--marker requires a string with content, not an empty or whitespace-only value"
+      :
+an empty --marker is admitted again, so that half of the condition is dropped and never checked
+--
+case_refuses_a_whitespace_only_marker_but_keeps_multi_word_markers
+      has_content "$2" || die_usage "--marker requires a string with content, not an empty or whitespace-only value"
+      :
+a whitespace-only marker is admitted and then matches the first log line carrying a space
+--
+case_refuses_a_whitespace_only_marker_but_keeps_multi_word_markers
+      has_content "$2" || die_usage "--marker requires a string with content, not an empty or whitespace-only value"
+      case $2 in *[[:space:]]*) die_usage "--marker requires a string with content, not an empty or whitespace-only value" ;; esac
+the guard widens from whitespace-only to whitespace-containing, refusing the multi-word markers that are the point
 RECORDS
 }
 
@@ -323,13 +371,13 @@ while IFS= read -r case_name && IFS= read -r anchor && IFS= read -r replacement 
     fail "perturbation $perturbed did not change the waiter: $anchor"
 
   if FM_WAIT_FOR_ONLY_CASE="$case_name" FM_WAIT_FOR_WAITER="$copy" \
-    bash "${BASH_SOURCE[0]}" > /dev/null 2>&1; then
+    FM_TEST_SKIP_ORPHAN_REAP=1 bash "${BASH_SOURCE[0]}" > /dev/null 2>&1; then
     fail "$case_name still passes with the waiter broken so that $meaning"
   fi
   pass "$case_name fails when $meaning"
   perturbed=$((perturbed + 1))
 done < <(perturbations)
 
-[ "$perturbed" -eq 8 ] ||
-  fail "expected 8 perturbations to run, ran $perturbed"
+[ "$perturbed" -eq 12 ] ||
+  fail "expected 12 perturbations to run, ran $perturbed"
 pass "every case above is proven able to fail"

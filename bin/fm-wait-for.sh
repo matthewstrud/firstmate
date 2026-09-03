@@ -44,7 +44,10 @@
 #                  being wrapped in layers of shell. Limits: the work has to
 #                  actually write the marker, a stale marker left by an earlier
 #                  run satisfies the wait immediately, and a file that does not
-#                  exist yet counts as not finished rather than as an error.
+#                  exist yet counts as not finished rather than as an error. A
+#                  marker with no content of its own is refused rather than
+#                  waited on, because an empty or entirely-whitespace marker
+#                  matches the first line of any log and reports success at once.
 #
 # Give both and the wait is satisfied only when the pid has exited AND the
 # marker is present, which is the honest condition for "the work finished, and
@@ -72,6 +75,16 @@ positive_int() {
   case ${1-} in
     '' | *[!0-9]*) return 1 ;;
     *) [ "$1" -gt 0 ] ;;
+  esac
+}
+
+# True when the value carries at least one non-whitespace character. A marker
+# that merely CONTAINS whitespace is the normal case ("all checks passed") and
+# stays acceptable; only one made entirely of whitespace has nothing to match on.
+has_content() {
+  case ${1-} in
+    *[![:space:]]*) return 0 ;;
+    *) return 1 ;;
   esac
 }
 
@@ -104,7 +117,7 @@ while [ "$#" -gt 0 ]; do
       ;;
     --marker)
       [ "$#" -gt 1 ] || die_usage "--marker requires a string"
-      [ -n "$2" ] || die_usage "--marker requires a string, not an empty value"
+      has_content "$2" || die_usage "--marker requires a string with content, not an empty or whitespace-only value"
       MARKER=$2
       shift 2
       ;;
