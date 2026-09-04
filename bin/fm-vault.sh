@@ -75,7 +75,14 @@ cmd_import() {
   mkdir -p "$dest_path"
   local copied
   if command -v rsync >/dev/null 2>&1; then
-    rsync -a --delete \
+    # --ignore-times is load-bearing, not a tuning knob. rsync's default quick
+    # check skips any file whose size AND mtime both match the destination, so a
+    # real content change under an unchanged size and timestamp is silently not
+    # transferred and import reports a success it did not perform. The fallback
+    # branch below empties the destination and re-copies, so it always
+    # overwrites; without --ignore-times this command would mean one thing on a
+    # machine with rsync and another on a machine without it.
+    rsync -a --delete --ignore-times \
       --exclude '.git' --exclude 'node_modules' --exclude '.DS_Store' \
       "$(cd "$source" && pwd)/" "$dest_path/"
   else
