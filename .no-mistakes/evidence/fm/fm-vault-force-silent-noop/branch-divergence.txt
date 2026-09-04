@@ -1,0 +1,14 @@
+Command under test (identical in all four runs):
+  fm-vault.sh import new-project --dest myproj --force
+Source trees: identical size (20 bytes), identical mtime (2020-01-01), different content.
+Only variable: whether rsync is reachable on PATH.
+
+BEFORE the fix (base commit 0b1ea58):
+  host WITH    rsync -> # hello OLD version
+  host WITHOUT rsync -> # hello NEW version
+  ^^ ONE command, TWO meanings, decided by what happens to be installed.
+
+AFTER the fix (72a7e6e):
+  host WITH    rsync -> # hello NEW version
+  host WITHOUT rsync -> # hello NEW version
+  ^^ branches agree: --force means the destination is a faithful copy of the source.

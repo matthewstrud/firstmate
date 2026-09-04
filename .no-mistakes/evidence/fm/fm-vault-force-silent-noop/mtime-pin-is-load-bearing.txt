@@ -1,0 +1,33 @@
+Claim under test: pinning an identical mtime on every source file is a STRENGTHENING,
+because without it the size-and-mtime trap is only armed when both sources happen to
+land in the same clock tick. Method: revert the fix (re-introducing the bug), then run
+the suite with and without the pin. A test that cannot see the reverted bug is a coin toss.
+
+=== fix REVERTED, mtime pin PRESENT (as committed) ===
+not ok - import --force replaced the old content with the new source's content
+[suite exit: 1]
+
+=== fix REVERTED, mtime pin REMOVED (sources take whatever the clock gives) ===
+run 1:
+not ok - import --force replaced the old content with the new source's content
+run 2:
+not ok - import --force replaced the old content with the new source's content
+run 3:
+not ok - import --force replaced the old content with the new source's content
+
+Reading: with the pin, the reverted bug is caught every time. Without it, the sources
+land in the same clock tick or not by luck, so the regression test stops being one.
+
+=== CORRECTION / direct measurement of what the pin controls ===
+The 3 unpinned runs above still caught the bug because on this host both sources are
+created inside the same second, so their mtimes matched by accident. That is exactly the
+coin toss the pin removes. Measuring the two mtime conditions directly against the BUGGY
+(base) script shows which one arms the trap:
+
+  sources share an mtime (what the pin forces):  vault holds: # hello OLD version
+  sources differ by one second (unpinned luck):  vault holds: # hello NEW version
+
+Reading: the bug is only visible when the two sources share size AND mtime. The pin makes
+that condition hold on every run instead of depending on both sources landing in the same
+second, so the case is a regression test rather than a coin toss. It is a strengthening;
+on this fast host the unpinned suite happened to catch the bug anyway.

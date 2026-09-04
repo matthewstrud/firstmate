@@ -1,0 +1,19 @@
+================ BEFORE the fix (base commit 0b1ea58) ================
+imported 1 files to myproj
+next: obsidian-axi ls myproj -r   |   fm-vault.sh publish to go live
+--- vault now holds: # hello OLD version
+$ fm-vault.sh import new-project --dest myproj --force
+imported 1 files to myproj
+next: obsidian-axi ls myproj -r   |   fm-vault.sh publish to go live
+exit code: 0
+--- vault now holds: # hello OLD version
+
+================ AFTER the fix (72a7e6e) ================
+imported 1 files to myproj
+next: obsidian-axi ls myproj -r   |   fm-vault.sh publish to go live
+--- vault now holds: # hello OLD version
+$ fm-vault.sh import new-project --dest myproj --force
+imported 1 files to myproj
+next: obsidian-axi ls myproj -r   |   fm-vault.sh publish to go live
+exit code: 0
+--- vault now holds: # hello NEW version

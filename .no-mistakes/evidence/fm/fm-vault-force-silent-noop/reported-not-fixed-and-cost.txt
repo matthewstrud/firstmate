@@ -1,0 +1,31 @@
+=== A. The exclusions divergence: reported in the PR body, deliberately NOT fixed here ===
+Building a source with .git and node_modules at BOTH top level and nested depth, plus a
+.DS_Store, then importing it on each branch with the FIXED script:
+--- rsync branch kept: ---
+./docs
+./docs/nested
+./docs/readme.md
+--- fallback branch kept: ---
+./docs
+./docs/.DS_Store
+./docs/nested
+./docs/nested/.git
+./docs/nested/.git/config
+./docs/nested/node_modules
+./docs/nested/node_modules/pkg.js
+./docs/readme.md
+--- diff (fallback vs rsync): ---
+1a2
+> ./docs/.DS_Store
+2a4,7
+> ./docs/nested/.git
+> ./docs/nested/.git/config
+> ./docs/nested/node_modules
+> ./docs/nested/node_modules/pkg.js
+^^ the two branches STILL diverge on exclusions - confirms the separately-reported, out-of-scope finding is real and not fixed by this PR
+
+=== B. The accepted cost: --ignore-times re-transfers every file, even unchanged ones ===
+Re-importing the SAME unchanged source with --force; counting files rsync actually sends:
+  with --ignore-times (as shipped): 1
+  without --ignore-times (old behaviour): 0
+  ^^ the stated trade: unchanged files are re-sent on every --force import.

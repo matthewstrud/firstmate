@@ -1,0 +1,158 @@
+########## BASELINE: unperturbed, fix in place ##########
+ok - import into a fresh destination copies files wholesale
+ok - import with no --dest uses the source directory's own name
+ok - import refuses to clobber an existing non-empty destination without --force
+ok - import --force overwrites an existing destination
+ok - import --force overwrites an existing destination on a host without rsync
+ok - import --force means the same thing with and without rsync installed
+ok - import of a missing source directory fails loudly
+ok - publish runs the Quartz deploy script and relays its output
+ok - publish fails loudly when the Quartz deploy script is missing
+ok - an unknown command fails loudly instead of doing nothing
+[suite exit: 0]
+
+########## PERTURBATION 1: revert the fix (drop --ignore-times) ##########
+85:    rsync -a --delete \
+ok - import into a fresh destination copies files wholesale
+ok - import with no --dest uses the source directory's own name
+ok - import refuses to clobber an existing non-empty destination without --force
+not ok - import --force replaced the old content with the new source's content
+[suite exit: 1]
+
+########## PERTURBATION 2: fix reverted, parity case isolated ##########
+ok - import into a fresh destination copies files wholesale
+ok - import with no --dest uses the source directory's own name
+ok - import refuses to clobber an existing non-empty destination without --force
+not ok - import --force delivered the new content on the rsync copy branch
+[suite exit: 1]
+
+########## PERTURBATION 3: fallback branch leaves an extra file (fix intact) ##########
+    find "$dest_path" -mindepth 1 -delete
+    cp -r "$source/." "$dest_path/"
+    rm -rf "$dest_path/.git" "$dest_path/node_modules"
+  fi
+ok - import into a fresh destination copies files wholesale
+ok - import with no --dest uses the source directory's own name
+ok - import refuses to clobber an existing non-empty destination without --force
+ok - import --force overwrites an existing destination
+ok - import --force means the same thing with and without rsync installed
+ok - import of a missing source directory fails loudly
+ok - publish runs the Quartz deploy script and relays its output
+ok - publish fails loudly when the Quartz deploy script is missing
+ok - an unknown command fails loudly instead of doing nothing
+[suite exit: 0]
+
+########## PERTURBATION 4: probe rsync wrapper stops recording ##########
+(sed did not match - trying alternate)
+ok - import into a fresh destination copies files wholesale
+ok - import with no --dest uses the source directory's own name
+ok - import refuses to clobber an existing non-empty destination without --force
+ok - import --force overwrites an existing destination
+ok - import --force overwrites an existing destination on a host without rsync
+ok - import --force means the same thing with and without rsync installed
+ok - import of a missing source directory fails loudly
+ok - publish runs the Quartz deploy script and relays its output
+ok - publish fails loudly when the Quartz deploy script is missing
+ok - an unknown command fails loudly instead of doing nothing
+[suite exit: 0]
+
+########## PERTURBATION 5: rsync re-added to the rsync-free shim PATH ##########
+36:FM_VAULT_TOOLS=(bash find mkdir cp rm wc tr basename cat rsync)
+ok - import into a fresh destination copies files wholesale
+ok - import with no --dest uses the source directory's own name
+ok - import refuses to clobber an existing non-empty destination without --force
+ok - import --force overwrites an existing destination
+not ok - test setup: rsync is still reachable on the rsync-free PATH, so the fallback copy branch would never run
+[suite exit: 1]
+
+########## RESTORED: fix and tests back to committed state ##########
+ok - import into a fresh destination copies files wholesale
+ok - import with no --dest uses the source directory's own name
+ok - import refuses to clobber an existing non-empty destination without --force
+ok - import --force overwrites an existing destination
+ok - import --force overwrites an existing destination on a host without rsync
+ok - import --force means the same thing with and without rsync installed
+ok - import of a missing source directory fails loudly
+ok - publish runs the Quartz deploy script and relays its output
+ok - publish fails loudly when the Quartz deploy script is missing
+ok - an unknown command fails loudly instead of doing nothing
+[suite exit: 0]
+
+########## PERTURBATION 3 (retry): fallback branch leaves an extra file, fix intact ##########
+  else
+    find "$dest_path" -mindepth 1 -delete
+    cp -r "$source/." "$dest_path/"
+    rm -rf "$dest_path/.git" "$dest_path/node_modules"
+    touch "$dest_path/STRAY-FROM-FALLBACK-BRANCH"
+  fi
+--- perturbation applied above; the fallback branch now diverges from rsync's ---
+ok - import into a fresh destination copies files wholesale
+ok - import with no --dest uses the source directory's own name
+ok - import refuses to clobber an existing non-empty destination without --force
+ok - import --force overwrites an existing destination
+/home/mosaic/.no-mistakes/worktrees/cab7c281f0e7/01M1P4MM904AXRCYEMKD80EJ2B/bin/fm-vault.sh: line 92: touch: command not found
+/home/mosaic/.no-mistakes/worktrees/cab7c281f0e7/01M1P4MM904AXRCYEMKD80EJ2B/bin/fm-vault.sh: line 92: touch: command not found
+not ok - import --force over an existing destination exits 0 with no rsync installed: expected exit 0, got 127
+[suite exit: 1]
+
+########## PERTURBATION 4 (retry): probe rsync wrapper stops recording that it ran ##########
+  cat > "$shim/rsync" <<EOF
+#!/usr/bin/env bash
+: # perturbed: wrapper no longer records that rsync ran
+exec "$real" "\$@"
+EOF
+  chmod +x "$shim/rsync"
+--- perturbation applied above; the probe can no longer prove the rsync branch ran ---
+ok - import into a fresh destination copies files wholesale
+ok - import with no --dest uses the source directory's own name
+ok - import refuses to clobber an existing non-empty destination without --force
+ok - import --force overwrites an existing destination
+ok - import --force overwrites an existing destination on a host without rsync
+not ok - the rsync-branch run must actually have invoked rsync, or this case is comparing the fallback branch with itself
+[suite exit: 1]
+
+########## RESTORED again ##########
+ok - import into a fresh destination copies files wholesale
+ok - import with no --dest uses the source directory's own name
+ok - import refuses to clobber an existing non-empty destination without --force
+ok - import --force overwrites an existing destination
+ok - import --force overwrites an existing destination on a host without rsync
+ok - import --force means the same thing with and without rsync installed
+ok - import of a missing source directory fails loudly
+ok - publish runs the Quartz deploy script and relays its output
+ok - publish fails loudly when the Quartz deploy script is missing
+ok - an unknown command fails loudly instead of doing nothing
+[suite exit: 0]
+[worktree clean]
+
+########## PERTURBATION 3 (retry 2): fallback branch leaves an extra entry, fix intact ##########
+(previous attempt used touch, which the rsync-free shim PATH does not provide, so the run
+ died at exit 127 before reaching the divergence guard. mkdir IS on that PATH.)
+  else
+    find "$dest_path" -mindepth 1 -delete
+    cp -r "$source/." "$dest_path/"
+    rm -rf "$dest_path/.git" "$dest_path/node_modules"
+    mkdir -p "$dest_path/STRAY-FROM-FALLBACK-BRANCH"
+  fi
+--- the fallback branch now leaves behind an entry the rsync branch does not ---
+ok - import into a fresh destination copies files wholesale
+ok - import with no --dest uses the source directory's own name
+ok - import refuses to clobber an existing non-empty destination without --force
+ok - import --force overwrites an existing destination
+ok - import --force overwrites an existing destination on a host without rsync
+not ok - import --force produced different vault content depending on whether rsync is installed
+[suite exit: 1]
+
+########## RESTORED ##########
+ok - import into a fresh destination copies files wholesale
+ok - import with no --dest uses the source directory's own name
+ok - import refuses to clobber an existing non-empty destination without --force
+ok - import --force overwrites an existing destination
+ok - import --force overwrites an existing destination on a host without rsync
+ok - import --force means the same thing with and without rsync installed
+ok - import of a missing source directory fails loudly
+ok - publish runs the Quartz deploy script and relays its output
+ok - publish fails loudly when the Quartz deploy script is missing
+ok - an unknown command fails loudly instead of doing nothing
+[suite exit: 0]
+[worktree clean]
