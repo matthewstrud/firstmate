@@ -817,6 +817,49 @@ test_scout_and_secondmate_load_decision_hold_policy() {
   pass "fm-brief.sh: investigation and visual-review completions load the shared decision policy"
 }
 
+# Every crewmate contract must route waits to the shared pattern-free waiter.
+# A helper nobody is told about changes nothing, so this asserts adoption in the
+# generated briefs AND that the path they name is a real, runnable waiter: a
+# stale pointer is the same as no pointer at all.
+test_briefs_route_waits_to_the_pattern_free_waiter() {
+  local home kind id brief named waiter_help
+  home="$TMP_ROOT/wait-for-home"
+  mkdir -p "$home/data"
+  for kind in ship scout; do
+    id="wait-$kind"
+    case "$kind" in
+      ship)
+        FM_HOME="$home" FM_ROOT_OVERRIDE="$ROOT" \
+          "$ROOT/bin/fm-brief.sh" "$id" firstmate --mode no-mistakes >/dev/null 2>&1
+        ;;
+      scout)
+        FM_HOME="$home" FM_ROOT_OVERRIDE="$ROOT" \
+          "$ROOT/bin/fm-brief.sh" "$id" firstmate --scout >/dev/null 2>&1
+        ;;
+    esac
+    brief="$home/data/$id/brief.md"
+    assert_grep "Never wait on a process-name pattern" "$brief" \
+      "$kind brief did not forbid waiting on a process-name pattern"
+    assert_grep "the check matches itself" "$brief" \
+      "$kind brief did not say why a process-name pattern never terminates"
+    assert_grep "bin/fm-wait-for.sh" "$brief" \
+      "$kind brief did not point crews at the shared waiter"
+    # shellcheck disable=SC2016 # Literal backticks must remain unexpanded.
+    assert_grep '`--marker <string> --file <path>`' "$brief" \
+      "$kind brief did not name the artifact-watching wait mode"
+
+    # shellcheck disable=SC2016 # The bracket class must reach grep literally.
+    named=$(grep -oE '[^ `]+/bin/fm-wait-for[.]sh' "$brief" | head -n 1)
+    [ -n "$named" ] || fail "$kind brief named no absolute waiter path"
+    [ -x "$named" ] || fail "$kind brief points at $named, which is not executable"
+    waiter_help=$("$named" --help 2>&1) ||
+      fail "the waiter named by the $kind brief does not answer --help"
+    assert_contains "$waiter_help" "accepts no pattern flag" \
+      "the waiter named by the $kind brief renders a --help without the pattern-free contract"
+  done
+  pass "fm-brief.sh: ship and scout briefs route waits to a live pattern-free waiter"
+}
+
 # Scout and secondmate paths still scaffold well-formed briefs.
 test_scout_and_secondmate_scaffold() {
   local brief
@@ -867,4 +910,5 @@ test_secondmate_marked_request_reporting_contract
 test_secondmate_directory_paths_are_absolute_and_output_is_stable
 test_pause_verb_override_renders_all_brief_scaffolds
 test_scout_and_secondmate_load_decision_hold_policy
+test_briefs_route_waits_to_the_pattern_free_waiter
 test_scout_and_secondmate_scaffold
