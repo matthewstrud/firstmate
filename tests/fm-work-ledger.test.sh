@@ -349,6 +349,21 @@ EOF
   pass "the retirement copy step reports failure instead of losing rows"
 }
 
+test_a_confirmed_merge_is_stamped_once() {
+  local merged_home pr_url=https://github.com/example/repo/pull/7 rc=0
+  merged_home=$(make_home merged)
+  (
+    # shellcheck source=bin/fm-merge-outcome-lib.sh
+    . "$ROOT/bin/fm-merge-outcome-lib.sh"
+    fm_merge_outcome_report "$merged_home" "$merged_home/state" t1 "$pr_url" self &&
+      fm_merge_outcome_report "$merged_home" "$merged_home/state" t1 "$pr_url" poll
+  ) >/dev/null 2>&1 || rc=$?
+  expect_code 0 "$rc" "recording the merge outcome"
+  assert_equals 1 "$(grep -c "row=merged pr=$pr_url" "$(events "$merged_home" t1)")" \
+    "a merge already recorded must not be stamped again"
+  pass "a confirmed merge is stamped in the ledger once"
+}
+
 test_turn_rows_follow_the_record
 test_stale_incarnation_is_not_appended
 test_relaunch_keeps_both_incarnations_in_one_file
@@ -365,3 +380,4 @@ test_digest_waits_for_five_rated_cards
 test_secondmate_lane_is_copied_without_writing_to_it
 test_arm_is_primary_only_and_registers_the_shim
 test_retirement_copy_fails_closed
+test_a_confirmed_merge_is_stamped_once
