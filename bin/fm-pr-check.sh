@@ -19,6 +19,8 @@ STATE="${FM_STATE_OVERRIDE:-$FM_HOME/state}"
 . "$SCRIPT_DIR/fm-wake-lib.sh"
 # shellcheck source=bin/fm-parent-channel-lib.sh
 . "$SCRIPT_DIR/fm-parent-channel-lib.sh"
+# shellcheck source=bin/fm-work-ledger-lib.sh
+. "$SCRIPT_DIR/fm-work-ledger-lib.sh"
 
 if [ "$#" -ne 2 ]; then
   echo "error: invalid PR check request" >&2
@@ -135,6 +137,10 @@ fm_pr_metadata_identity_parse "$META" || exit 1
   && [ "$FM_PR_META_NUMBER" = "$NUMBER" ] || exit 1
 fm_lock_release "$META_LOCK"
 META_LOCK_HELD=0
+# Stamp the PR-ready moment in the work ledger with this home's clock, since
+# neither the meta line above nor the worker's status line carries a time
+# (bin/fm-work-ledger-lib.sh; the append cannot fail this registration).
+fm_work_ledger_append "$STATE" "$ID" pr-ready "pr=$(fm_work_ledger_token "$URL")"
 
 PR_POLL_PUBLISH_LOCK="$STATE/.pr-poll-publish-$ID.lock"
 fm_lock_acquire_wait "$PR_POLL_PUBLISH_LOCK"

@@ -288,6 +288,35 @@ test_claude_hooks_stale_incarnation_harmless() {
   pass "claude hook events from a superseded incarnation are rejected without breaking the hook"
 }
 
+# The spawn row carries the card's frozen rating and parent from its backlog
+# title, and a card dispatched without a rating is recorded as unrated rather
+# than dropped.
+test_spawn_row_records_the_frozen_rating() {
+  local rec id=busy-led-1 out ledger
+  rec=$(make_spawn_case ledger-rated claude "$id")
+  read_case_record "$rec"
+  cp "$ROOT/.tasks.toml" "$HOME_DIR/.tasks.toml"
+  printf '%s\n' '# Backlog' '' '## In flight' '## Queued' \
+    "- [ ] $id - Rated card (rating: 4.5 by=fresh-session blind=yes at=2026-09-18T02:08Z) (parent: busy-led-0) (kind: ship) (since 2026-09-18)" \
+    '## Done' > "$HOME_DIR/data/backlog.md"
+  out=$(run_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$id" "$PROJ_DIR")
+  expect_code 0 $? "rated spawn should succeed: $out"
+  ledger="$HOME_DIR/state/work-ledger/$id.events"
+  assert_grep "id=$id row=spawn harness=claude " "$ledger" "spawn row missing"
+  assert_grep ' parent=busy-led-0 capture=supported rating=4.5 rater=fresh-session blind=yes rated_at=2026-09-18T02:08Z rating_read=ok' "$ledger" \
+    "spawn row did not carry the frozen rating and parent"
+  assert_grep ' row=arm ' "$ledger" "a measured harness must record its arm"
+
+  id=busy-led-2
+  rec=$(make_spawn_case ledger-unrated claude "$id")
+  read_case_record "$rec"
+  out=$(run_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$id" "$PROJ_DIR")
+  expect_code 0 $? "unrated spawn should succeed: $out"
+  assert_grep ' capture=supported rating=none ' "$HOME_DIR/state/work-ledger/$id.events" \
+    "a card with no rating must be recorded as unrated"
+  pass "the spawn row records the frozen rating, the parent, and an unrated card"
+}
+
 test_codex_unverified_until_a_semantic_source_exists() {
   local rec id=busy-cx-1 out state
   rec=$(make_spawn_case codex-unverified codex "$id")
@@ -298,6 +327,11 @@ test_codex_unverified_until_a_semantic_source_exists() {
   assert_absent "$state/$id.busy-gen" "codex must not arm a busy contract with no verified semantic source"
   assert_absent "$WT_DIR/.codex/hooks.json" "codex must not install unverified busy hooks"
   assert_contains "$out" 'spawned '"$id"' harness=codex' "codex spawn did not complete normally"
+  # No turn boundaries can be observed, so the work ledger must say so rather
+  # than leave a card that reads as zero minutes.
+  assert_grep "id=$id row=spawn harness=codex " "$state/work-ledger/$id.events" "codex spawn wrote no work-ledger spawn row"
+  assert_grep ' capture=unsupported ' "$state/work-ledger/$id.events" "codex must be recorded as unmeasured"
+  assert_no_grep ' row=arm ' "$state/work-ledger/$id.events" "codex must not record turn rows it cannot observe"
   out=$(classify codex "$id" "$state")
   [ "$out" = "unknown codex-unverified" ] || fail "codex must classify 'unknown codex-unverified', got '$out'"
   out=$(fm_busy_classify tmux fake:w codex "$id" "$state" '• Working (6s • esc to interrupt)')
@@ -434,5 +468,6 @@ test_gemini_hooks_stale_incarnation_harmless
 test_raw_gemini_launch_has_no_semantic_wiring
 test_gemini_is_refused_as_a_secondmate
 test_codex_unverified_until_a_semantic_source_exists
+test_spawn_row_records_the_frozen_rating
 
 echo "all fm-busy-adapter-wiring tests passed"

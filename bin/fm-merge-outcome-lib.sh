@@ -31,6 +31,8 @@ _FM_MERGE_OUTCOME_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "$_FM_MERGE_OUTCOME_LIB_DIR/fm-pr-lib.sh"
 # shellcheck source=bin/fm-parent-channel-lib.sh
 . "$_FM_MERGE_OUTCOME_LIB_DIR/fm-parent-channel-lib.sh"
+# shellcheck source=bin/fm-work-ledger-lib.sh
+. "$_FM_MERGE_OUTCOME_LIB_DIR/fm-work-ledger-lib.sh"
 
 # shellcheck disable=SC2034 # Public result consumed by sourcing callers.
 FM_MERGE_OUTCOME_ALREADY_RECORDED=false
@@ -95,6 +97,11 @@ fm_merge_outcome_report() {  # <home> <state> <task-id> <pr-url> <origin> [autho
     fm_lock_release "$lock"
     return 0
   fi
+
+  # The work ledger's merged row shares this operation's deduplication, so it
+  # inherits the same at-least-once shape: a retried publication may repeat the
+  # row, and the ledger's reader takes the first one.
+  fm_work_ledger_append "$state" "$id" merged "pr=$(fm_work_ledger_token "$FM_PR_URL")"
 
   if [ -n "$destination" ]; then
     fm_parent_channel_append_once "$destination" "$line" || status=1
