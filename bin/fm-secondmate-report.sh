@@ -33,6 +33,11 @@
 # helper is the sanctioned way to put one in the only position that works.
 # A call with no key writes the historical [corr=<id>] bracket shape
 # byte-for-byte, so existing callers and their tests are unchanged.
+# --key rejects the shared "default" bucket and any key in a reserved
+# namespace (read from FM_CLASSIFY_RESERVED_KEY_PREFIXES_DEFAULT in
+# bin/fm-classify-lib.sh), so a key the helper accepts is always one the
+# fold can actually open and fm-send.sh --resolve-key can close; an
+# environment override at classify time is not visible to this check.
 set -eu
 
 CALLER_FM_HOME=${FM_HOME:-}
@@ -86,6 +91,27 @@ if [ "$KEY_SET" = 1 ]; then
       exit 1
       ;;
   esac
+  # Reject the shared default key and any key in a reserved namespace.
+  # The prefix list is read from its one owner in bin/fm-classify-lib.sh
+  # (FM_CLASSIFY_RESERVED_KEY_PREFIXES_DEFAULT, which respects an
+  # FM_CLASSIFY_RESERVED_KEY_PREFIXES env override at classify time), so a
+  # change there cannot leave this guard silently stale. An env-override
+  # change is not visible to this helper's check, so it covers only the
+  # configured-default namespace - an overstated guarantee would be worse.
+  case "$KEY" in
+    default)
+      echo "error: --key 'default' is reserved: it is the shared unkeyed decision bucket; choose a distinct key" >&2
+      exit 1
+      ;;
+  esac
+  for _prefix in ${FM_CLASSIFY_RESERVED_KEY_PREFIXES:-$FM_CLASSIFY_RESERVED_KEY_PREFIXES_DEFAULT}; do
+    case "$KEY" in
+      "$_prefix"*)
+        echo "error: --key '$KEY' is reserved: it is in the '$_prefix' namespace, which opens decisions only for its owning library (fm-pending-reply-lib.sh); choose a different key" >&2
+        exit 1
+        ;;
+    esac
+  done
 fi
 
 [ $# -ge 2 ] || usage

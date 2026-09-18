@@ -761,12 +761,49 @@ EOF
   pass "helper --key=<value> opens a keyed decision; empty and unknown --* values refuse"
 }
 
+test_helper_rejects_reserved_and_default_keys() {
+  local dir state parent mate corr rc
+  dir=$(make_case helper-reserved-key)
+  state="$dir/state"
+  parent="$dir"
+  mate="$dir/mate"
+  mkdir -p "$mate/state"
+  printf 'pinned\n' > "$mate/.fm-secondmate-home"
+  cat > "$mate/.fm-secondmate-parent" <<EOF
+schema=fm-secondmate-parent.v1
+route=local
+parent_home=$parent
+EOF
+  corr=$(bash -c '. "$1"; fm_pending_reply_new_id' _ "$ROOT/bin/fm-pending-reply-lib.sh")
+
+  # A key in the reserved pending-reply- namespace must refuse.
+  rc=0
+  FM_HOME="$mate" "$REPORT" --key pending-reply-abcdef0123456789 needs-decision "$corr" "about a missed reply" \
+    >"$dir/r.out" 2>"$dir/r.err" || rc=$?
+  [ "$rc" -ne 0 ] || fail "a reserved-namespace key must refuse"
+  assert_contains "$(cat "$dir/r.err")" "reserved" "the reserved-key refusal should name it as reserved"
+  assert_contains "$(cat "$dir/r.err")" "pending-reply-abcdef0123456789" "the reserved-key refusal should name the key"
+  [ ! -e "$state/pinned.status" ] || fail "a refused reserved key still wrote a status line"
+
+  # The literal default key must refuse.
+  rc=0
+  FM_HOME="$mate" "$REPORT" --key default needs-decision "$corr" "some decision" \
+    >"$dir/d.out" 2>"$dir/d.err" || rc=$?
+  [ "$rc" -ne 0 ] || fail "the default key must refuse"
+  assert_contains "$(cat "$dir/d.err")" "reserved" "the default-key refusal should name it as reserved"
+  assert_contains "$(cat "$dir/d.err")" "default" "the default-key refusal should name the key"
+  [ ! -e "$state/pinned.status" ] || fail "a refused default key still wrote a status line"
+
+  pass "the helper refuses reserved-namespace and default keys before writing"
+}
+
 test_helper_keyed_report_opens_and_closes_keyed_decision
 test_helper_keyless_call_is_byte_identical_to_historical
 test_helper_keyed_doc_report
 test_helper_key_at_tail_is_silently_ignored
 test_helper_rejects_option_shaped_key_value
 test_helper_key_equals_form_opens_keyed_decision
+test_helper_rejects_reserved_and_default_keys
 test_tokened_opener_opens_and_tokened_closer_closes
 test_token_is_read_through_in_every_position_it_is_written_in
 test_untokened_pair_is_unchanged
