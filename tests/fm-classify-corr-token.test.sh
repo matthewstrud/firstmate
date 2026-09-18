@@ -691,7 +691,7 @@ EOF
   # "--key --doc" used to consume "--doc" as the key value: it is charset-valid,
   # so the check passed, doc mode silently never engaged, and a decision opened
   # under the literal key "--doc". It must now refuse before writing anything.
-  if FM_HOME="$mate" "$REPORT" --key --doc done "$corr" data/x/report.md "see report" \
+  if FM_HOME="$mate" "$REPORT" --key --doc "done" "$corr" data/x/report.md "see report" \
     >"$dir/out" 2>"$dir/err"; then
     fail "an option-shaped --key value must refuse"
   fi
