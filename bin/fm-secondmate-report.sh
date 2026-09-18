@@ -15,12 +15,29 @@
 # set to that home.
 #
 # Usage:
-#   fm-secondmate-report.sh <verb> <corr_id> <note...>
-#   fm-secondmate-report.sh --doc <verb> <corr_id> <doc-path> <note...>
+#   fm-secondmate-report.sh [--key <key>] <verb> <corr_id> <note...>
+#   fm-secondmate-report.sh [--key <key>] --doc <verb> <corr_id> <doc-path> <note...>
 #
 # Examples:
 #   fm-secondmate-report.sh done abcdef0123456789 "audit clean"
+#   fm-secondmate-report.sh --key api-shape blocked abcdef0123456789 "needs the wall shape"
 #   fm-secondmate-report.sh --doc done abcdef0123456789 data/x/report.md "see report"
+#
+# When --key <key> is given the status line carries [key=<key>] at the note
+# head (immediately after the colon), which is the only bracket position
+# bin/fm-classify-lib.sh reads as a decision key via _fm_key_at_note_head.
+# The corr token stays in the leading bracket as [corr=<id>], so
+# fm_pending_reply_extract_corr and the pending-reply contract
+# (bin/fm-pending-reply-lib.sh) still correlate the reply. A [key=<key>]
+# placed anywhere else in the note is silently ignored by the fold, so this
+# helper is the sanctioned way to put one in the only position that works.
+# A call with no key writes the historical [corr=<id>] bracket shape
+# byte-for-byte, so existing callers and their tests are unchanged.
+# --key rejects the shared "default" bucket and any key in a reserved
+# namespace (read from FM_CLASSIFY_RESERVED_KEY_PREFIXES_DEFAULT in
+# bin/fm-classify-lib.sh), so a key the helper accepts is always one the
+# fold can actually open and fm-send.sh --resolve-key can close; an
+# environment override at classify time is not visible to this check.
 set -eu
 
 CALLER_FM_HOME=${FM_HOME:-}
@@ -33,16 +50,68 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 usage() {
   cat <<'EOF' >&2
 Usage:
-  fm-secondmate-report.sh <verb> <corr_id> <note...>
-  fm-secondmate-report.sh --doc <verb> <corr_id> <doc-path> <note...>
+  fm-secondmate-report.sh [--key <key>] <verb> <corr_id> <note...>
+  fm-secondmate-report.sh [--key <key>] --doc <verb> <corr_id> <doc-path> <note...>
 EOF
   exit 2
 }
 
+KEY=
 DOC_MODE=0
-if [ "${1:-}" = "--doc" ]; then
-  DOC_MODE=1
-  shift
+KEY_SET=0
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --key)
+      KEY_SET=1
+      [ $# -ge 2 ] || { echo "error: --key requires an argument" >&2; exit 1; }
+      KEY=$2
+      shift 2
+      ;;
+    --key=*)
+      KEY_SET=1
+      KEY=${1#--key=}
+      shift
+      ;;
+    --doc)
+      DOC_MODE=1
+      shift
+      ;;
+    --*)
+      echo "error: unknown option '$1' (expected --key <key> or --doc)" >&2
+      exit 1
+      ;;
+    *) break ;;
+  esac
+done
+
+if [ "$KEY_SET" = 1 ]; then
+  case "$KEY" in
+    ''|*[!A-Za-z0-9._-]*|-*)
+      echo "error: --key '$KEY' is not a valid decision key (nonempty, A-Z a-z 0-9 . _ -, and not starting with -)" >&2
+      exit 1
+      ;;
+  esac
+  # Reject the shared default key and any key in a reserved namespace.
+  # The prefix list is read from its one owner in bin/fm-classify-lib.sh
+  # (FM_CLASSIFY_RESERVED_KEY_PREFIXES_DEFAULT, which respects an
+  # FM_CLASSIFY_RESERVED_KEY_PREFIXES env override at classify time), so a
+  # change there cannot leave this guard silently stale. An env-override
+  # change is not visible to this helper's check, so it covers only the
+  # configured-default namespace - an overstated guarantee would be worse.
+  case "$KEY" in
+    default)
+      echo "error: --key 'default' is reserved: it is the shared unkeyed decision bucket; choose a distinct key" >&2
+      exit 1
+      ;;
+  esac
+  for _prefix in ${FM_CLASSIFY_RESERVED_KEY_PREFIXES:-$FM_CLASSIFY_RESERVED_KEY_PREFIXES_DEFAULT}; do
+    case "$KEY" in
+      "$_prefix"*)
+        echo "error: --key '$KEY' is reserved: it is in the '$_prefix' namespace, which opens decisions only for its owning library (fm-pending-reply-lib.sh); choose a different key" >&2
+        exit 1
+        ;;
+    esac
+  done
 fi
 
 [ $# -ge 2 ] || usage
@@ -89,16 +158,21 @@ if [ ! -d "$(dirname "$DESTINATION")" ]; then
 fi
 
 token=$(fm_pending_reply_corr_token "$CORR")
+if [ -n "$KEY" ]; then
+  KEY_PREFIX="[key=$KEY] "
+else
+  KEY_PREFIX=""
+fi
 if [ "$DOC_MODE" = 1 ]; then
   DOC_PATH=$1
   shift
   NOTE=$*
   if [ -n "$NOTE" ]; then
-    printf '%s [%s]: %s (%s via-helper)\n' "$VERB" "$token" "$NOTE" "$DOC_PATH" >> "$DESTINATION"
+    printf '%s [%s]: %s%s (%s via-helper)\n' "$VERB" "$token" "$KEY_PREFIX" "$NOTE" "$DOC_PATH" >> "$DESTINATION"
   else
-    printf '%s [%s]: %s (via-helper)\n' "$VERB" "$token" "$DOC_PATH" >> "$DESTINATION"
+    printf '%s [%s]: %s%s (via-helper)\n' "$VERB" "$token" "$KEY_PREFIX" "$DOC_PATH" >> "$DESTINATION"
   fi
 else
   NOTE=$*
-  printf '%s [%s]: %s (via-helper)\n' "$VERB" "$token" "$NOTE" >> "$DESTINATION"
+  printf '%s [%s]: %s%s (via-helper)\n' "$VERB" "$token" "$KEY_PREFIX" "$NOTE" >> "$DESTINATION"
 fi
