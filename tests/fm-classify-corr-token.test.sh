@@ -711,11 +711,62 @@ EOF
   pass "the helper refuses option-shaped and dash-leading --key values before writing"
 }
 
+test_helper_key_equals_form_opens_keyed_decision() {
+  local dir state out view parent mate corr line
+  dir=$(make_case helper-key-equals)
+  state="$dir/state"
+  out="$dir/drain.out"
+  parent="$dir"
+  mate="$dir/mate"
+  mkdir -p "$mate/state"
+  printf 'pinned\n' > "$mate/.fm-secondmate-home"
+  cat > "$mate/.fm-secondmate-parent" <<EOF
+schema=fm-secondmate-parent.v1
+route=local
+parent_home=$parent
+EOF
+  corr=$(bash -c '. "$1"; fm_pending_reply_new_id' _ "$ROOT/bin/fm-pending-reply-lib.sh")
+
+  # --key=<value> must behave exactly like --key <value>: the decision opens
+  # under the named key at the note head, with the corr token retained.
+  FM_HOME="$mate" "$REPORT" --key=wall-shape needs-decision "$corr" "the wall is flat" \
+    || fail "helper --key= report failed"
+  line=$(tail -1 "$state/pinned.status")
+  case "$line" in
+    *"needs-decision [corr=$corr]: [key=wall-shape] the wall is flat (via-helper)"*) : ;;
+    *) fail "helper --key= did not open the keyed decision at the note head: $line" ;;
+  esac
+  view=$(drain_open "$state" "$out")
+  case "$view" in
+    *'pinned'*'[key=wall-shape]'*'the wall is flat'*) : ;;
+    *) fail "helper --key= did not open a keyed decision: $view" ;;
+  esac
+
+  # An empty value on the equals form must refuse, not fall through as the verb.
+  if FM_HOME="$mate" "$REPORT" --key= needs-decision "$corr" "wall note" \
+    >"$dir/out" 2>"$dir/err"; then
+    fail "an empty --key= value must refuse"
+  fi
+  assert_contains "$(cat "$dir/err")" "not a valid decision key" \
+    "the empty --key= refusal should be explicit"
+
+  # Any other leading --* token must refuse loudly instead of becoming the verb.
+  if FM_HOME="$mate" "$REPORT" --bogus needs-decision "$corr" "wall note" \
+    >"$dir/out2" 2>"$dir/err2"; then
+    fail "an unknown leading --* option must refuse"
+  fi
+  assert_contains "$(cat "$dir/err2")" "unknown option" \
+    "the unknown option refusal should be explicit"
+
+  pass "helper --key=<value> opens a keyed decision; empty and unknown --* values refuse"
+}
+
 test_helper_keyed_report_opens_and_closes_keyed_decision
 test_helper_keyless_call_is_byte_identical_to_historical
 test_helper_keyed_doc_report
 test_helper_key_at_tail_is_silently_ignored
 test_helper_rejects_option_shaped_key_value
+test_helper_key_equals_form_opens_keyed_decision
 test_tokened_opener_opens_and_tokened_closer_closes
 test_token_is_read_through_in_every_position_it_is_written_in
 test_untokened_pair_is_unchanged

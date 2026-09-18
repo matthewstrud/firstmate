@@ -62,9 +62,18 @@ while [ $# -gt 0 ]; do
       KEY=$2
       shift 2
       ;;
+    --key=*)
+      KEY_SET=1
+      KEY=${1#--key=}
+      shift
+      ;;
     --doc)
       DOC_MODE=1
       shift
+      ;;
+    --*)
+      echo "error: unknown option '$1' (expected --key <key> or --doc)" >&2
+      exit 1
       ;;
     *) break ;;
   esac
