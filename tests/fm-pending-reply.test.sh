@@ -1430,6 +1430,34 @@ test_mechanical_helper_writes_parent_channel() {
   pass "mechanical helper writes the parent channel from verb, corr, and note"
 }
 
+test_mechanical_helper_keyed_report_resolves() {
+  local home state sm_home corr
+  home=$(setup_parent keyed-helper)
+  state="$home/state"
+  sm_home=$(bind_local_mate "$home" hibit)
+  export FM_PENDING_REPLY_NOW=11300
+  corr=$(fm_pending_reply_create "$home" "$state" hibit "keyed audit")
+  fm_pending_reply_mark_delivered "$state" "$corr"
+  # --key form writes [key=<key>] corr=<id> to the parent channel.
+  FM_HOME="$sm_home" "$REPORT" --key audit-key blocked "$corr" "needs review" \
+    || fail "keyed helper report failed"
+  grep -Fq "corr=$corr" "$state/hibit.status" \
+    || fail "keyed helper must carry the corr token on the parent channel"
+  grep -Fq "[key=audit-key]" "$state/hibit.status" \
+    || fail "keyed helper must carry the decision key in the bracket"
+  fm_pending_reply_try_resolve "$state" "$corr" \
+    || fail "a keyed helper line on the parent channel must resolve the expectation"
+  [ "$(phase_of "$state" "$corr")" = resolved ] || fail "phase should be resolved"
+  [ "$(fm_pending_reply_get "$(fm_pending_reply_path "$state" "$corr")" resolved_via)" = helper ] \
+    || fail "resolved_via should be helper"
+  # The keyed decision must be openable under the named key, not stranded as default.
+  case "$(status_open_decisions "$state/hibit.status")" in
+    *"audit-key"*) : ;;
+    *) fail "keyed decision should be openable under its named key" ;;
+  esac
+  pass "mechanical helper --key resolves the expectation and carries both corr and key"
+}
+
 test_remote_parent_replies_is_not_wrong_home() {
   local home state sm_home corr rec hits
   home=$(setup_parent remote-parent-replies)
@@ -1608,6 +1636,7 @@ test_same_basename_self_home_corr_resolves_on_tick
 test_same_basename_reply_resolves_after_recovery_failure
 test_child_status_wrong_home_is_not_copied
 test_mechanical_helper_writes_parent_channel
+test_mechanical_helper_keyed_report_resolves
 test_remote_parent_replies_is_not_wrong_home
 test_local_parent_replies_is_wrong_home_evidence
 test_escalated_undelivered_correlation_stays_retryable

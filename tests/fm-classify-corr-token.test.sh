@@ -540,6 +540,143 @@ EOF
   pass "both real correlation-token writers produce lines this classifier reads through"
 }
 
+# --- the --key form of bin/fm-secondmate-report.sh --------------------------
+
+test_helper_keyed_report_opens_and_closes_keyed_decision() {
+  local dir state out view parent mate corr
+  dir=$(make_case helper-keyed)
+  state="$dir/state"
+  out="$dir/drain.out"
+  parent="$dir"
+  mate="$dir/mate"
+  mkdir -p "$mate/state"
+  printf 'pinned\n' > "$mate/.fm-secondmate-home"
+  cat > "$mate/.fm-secondmate-parent" <<EOF
+schema=fm-secondmate-parent.v1
+route=local
+parent_home=$parent
+EOF
+  corr=$(bash -c '. "$1"; fm_pending_reply_new_id' _ "$ROOT/bin/fm-pending-reply-lib.sh")
+
+  # --key form: the helper writes [key=<key>] at the note head.
+  FM_HOME="$mate" "$REPORT" --key wall-shape needs-decision "$corr" "the wall is flat" \
+    || fail "helper --key report failed"
+  view=$(drain_open "$state" "$out")
+  case "$view" in
+    *'pinned'*'[key=wall-shape]'*'the wall is flat'*) : ;;
+    *) fail "helper --key did not open a keyed decision: $view" ;;
+  esac
+  grep -F "corr=$corr" "$state/pinned.status" >/dev/null \
+    || fail "helper --key dropped the corr token"
+  # The key must be at the note head, not in the leading bracket.
+  case "$(tail -1 "$state/pinned.status")" in
+    *"needs-decision [corr=$corr]: [key=wall-shape] the wall is flat (via-helper)"*) : ;;
+    *) fail "helper --key did not place the key at the note head: $(tail -1 "$state/pinned.status")" ;;
+  esac
+
+  # The same key closes from the helper, again carrying the corr token.
+  FM_HOME="$mate" "$REPORT" --key wall-shape resolved "$corr" "captain chose option two" \
+    || fail "helper --key resolve failed"
+  view=$(drain_open "$state" "$out")
+  case "$view" in
+    *'wall-shape'*) fail "helper --key resolve did not close the decision: $view" ;;
+  esac
+
+  pass "helper --key opens and closes a keyed decision while retaining the corr token"
+}
+
+test_helper_keyless_call_is_byte_identical_to_historical() {
+  local dir state view parent mate corr line expected
+  dir=$(make_case helper-keyless)
+  state="$dir/state"
+  parent="$dir"
+  mate="$dir/mate"
+  mkdir -p "$mate/state"
+  printf 'pinned\n' > "$mate/.fm-secondmate-home"
+  cat > "$mate/.fm-secondmate-parent" <<EOF
+schema=fm-secondmate-parent.v1
+route=local
+parent_home=$parent
+EOF
+  corr=$(bash -c '. "$1"; fm_pending_reply_new_id' _ "$ROOT/bin/fm-pending-reply-lib.sh")
+
+  FM_HOME="$mate" "$REPORT" "done" "$corr" "audit clean" \
+    || fail "helper keyless call failed"
+  line=$(tail -1 "$state/pinned.status")
+  # The historical shape: <verb> [corr=<id>]: <note> (via-helper)
+  expected=$(printf 'done [corr=%s]: audit clean (via-helper)' "$corr")
+  [ "$line" = "$expected" ] \
+    || fail "keyless helper output is not byte-identical to historical: [$line] != [$expected]"
+
+  pass "a keyless call writes the historical [corr=<id>] bracket shape byte-for-byte"
+}
+
+test_helper_keyed_doc_report() {
+  local dir state out view parent mate corr
+  dir=$(make_case helper-keyed-doc)
+  state="$dir/state"
+  out="$dir/drain.out"
+  parent="$dir"
+  mate="$dir/mate"
+  mkdir -p "$mate/state"
+  printf 'pinned\n' > "$mate/.fm-secondmate-home"
+  cat > "$mate/.fm-secondmate-parent" <<EOF
+schema=fm-secondmate-parent.v1
+route=local
+parent_home=$parent
+EOF
+  corr=$(bash -c '. "$1"; fm_pending_reply_new_id' _ "$ROOT/bin/fm-pending-reply-lib.sh")
+
+  # --key --doc form: the helper writes [key=<key>] at the note head.
+  FM_HOME="$mate" "$REPORT" --key api-shape --doc blocked "$corr" data/x/report.md "see report" \
+    || fail "helper --key --doc report failed"
+  view=$(drain_open "$state" "$out")
+  case "$view" in
+    *'pinned'*'[key=api-shape]'*'see report'*) : ;;
+    *) fail "helper --key --doc did not open a keyed decision: $view" ;;
+  esac
+  grep -F "corr=$corr" "$state/pinned.status" >/dev/null \
+    || fail "helper --key --doc dropped the corr token"
+  # The key must be at the note head, not at the tail.
+  case "$(tail -1 "$state/pinned.status")" in
+    *": [key=api-shape] see report ("*) : ;;
+    *) fail "helper --key --doc did not place the key at the note head: $(tail -1 "$state/pinned.status")" ;;
+  esac
+
+  pass "helper --key --doc opens a keyed decision with a doc pointer and corr token"
+}
+
+test_helper_key_at_tail_is_silently_ignored() {
+  local dir state out view parent
+  dir=$(make_case key-at-tail)
+  state="$dir/state"
+  out="$dir/drain.out"
+  parent="$dir"
+
+  # A key at the tail of the note (not at the note head) is silently ignored by
+  # the fold: the decision opens under "default", not under the stated key, so
+  # --resolve-key <key> cannot find it. This is the exact failure the helper's
+  # --key option fixes by placing the key at the note head.
+  printf 'needs-decision [corr=c44897ee2db4326b]: the wall is flat [key=wall-shape] (via-helper)\n' \
+    > "$state/tail.status"
+  # The drain prints keyed decisions as "task [key=key] verb: note". A key at the
+  # tail must NOT produce that prefix — it must open under "default" instead.
+  view=$(drain_open "$state" "$out")
+  case "$view" in
+    *"tail [key=wall-shape]"*)
+      fail "a key at the tail of the note must NOT be read as a decision key: $view"
+      ;;
+    *"tail needs-decision:"*) : ;;
+    *) fail "the tail-key line should open the default key: $view" ;;
+  esac
+
+  pass "a key at the tail of the note is silently ignored; only the note-head position works"
+}
+
+test_helper_keyed_report_opens_and_closes_keyed_decision
+test_helper_keyless_call_is_byte_identical_to_historical
+test_helper_keyed_doc_report
+test_helper_key_at_tail_is_silently_ignored
 test_tokened_opener_opens_and_tokened_closer_closes
 test_token_is_read_through_in_every_position_it_is_written_in
 test_untokened_pair_is_unchanged

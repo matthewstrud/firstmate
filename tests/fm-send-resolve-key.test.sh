@@ -39,6 +39,7 @@ set -u
 
 SEND="$ROOT/bin/fm-send.sh"
 DRAIN="$ROOT/bin/fm-wake-drain.sh"
+REPORT="$ROOT/bin/fm-secondmate-report.sh"
 
 TMP_ROOT=$(fm_test_tmproot fm-send-resolve-key)
 
@@ -696,6 +697,74 @@ test_failed_close_recovery_command_is_shell_safe() {
   pass "fm-send --resolve-key: failed-close recovery commands safely quote operator text and paths"
 }
 
+test_secondmate_helper_keyed_report_then_resolve_key() {
+  # The exact bug scenario: a secondmate raises a decision through the helper
+  # with --key, and the supervising firstmate closes it with --resolve-key.
+  # Before the fix the helper wrote [corr=<id>] in the bracket position, so the
+  # decision folded under "default" and --resolve-key refused with
+  # "no open decision or blocker with that key".
+  local dir fb log home state mate out rc corr
+  dir="$TMP_ROOT/helper-keyed"; mkdir -p "$dir"
+  fb=$(make_stubs "$dir"); log="$dir/send.log"
+  home=$(setup_home helper-keyed)
+  state="$home/state"
+
+  # A local secondmate child.
+  mate="$TMP_ROOT/helper-keyed-mate-$RANDOM"
+  mkdir -p "$mate/state"
+  printf '%s\n' domain > "$mate/.fm-secondmate-home"
+  cat > "$mate/.fm-secondmate-parent" <<EOF
+schema=fm-secondmate-parent.v1
+route=local
+parent_home=$home
+EOF
+  fm_write_secondmate_meta "$state/domain.meta" "$home" "sess:fm-domain"
+
+  # Create + deliver a pending-reply expectation.
+  corr=$(FM_HOME="$home" FM_PENDING_REPLY_NOW=11301 ROOT="$ROOT" bash -c '
+    . "$ROOT/bin/fm-pending-reply-lib.sh"
+    fm_pending_reply_create "$0" "$0/state" "domain" "choose the wall shape"
+  ' "$home")
+  FM_HOME="$home" ROOT="$ROOT" bash -c '
+    . "$ROOT/bin/fm-pending-reply-lib.sh"
+    fm_pending_reply_mark_delivered "$0/state" "$1"
+  ' "$home" "$corr"
+
+  # The secondmate reports a decision with a key through the helper.
+  FM_HOME="$mate" "$REPORT" --key wall-shape needs-decision "$corr" "the wall is straight" \
+    || fail "helper --key report should succeed"
+  grep -F "[key=wall-shape]" "$state/domain.status" >/dev/null \
+    || fail "helper --key must carry the decision key in the bracket: $(cat "$state/domain.status")"
+  grep -F "corr=$corr" "$state/domain.status" >/dev/null \
+    || fail "helper --key must still carry the corr token: $(cat "$state/domain.status")"
+
+  # The decision must be visible in OPEN DECISIONS under its named key.
+  out=$(drain_out "$home")
+  printf '%s' "$out" | grep -F '[key=wall-shape]' >/dev/null \
+    || fail "the keyed decision should list as open in the drain: $out"
+
+  # The supervising firstmate closes it with --resolve-key (the old refusal).
+  run_send "$fb" "$home" "$log" domain --resolve-key wall-shape "going with the curved shape"; rc=$?
+  expect_code 0 "$rc" "fm-send --resolve-key must succeed on a helper --key decision"
+  grep -F 'resolved [key=wall-shape]: answered: going with the curved shape' "$state/domain.status" >/dev/null \
+    || fail "the close line is missing: $(cat "$state/domain.status")"
+
+  # The drain must no longer list it.
+  out=$(drain_out "$home")
+  if printf '%s' "$out" | grep -F 'OPEN DECISIONS' >/dev/null; then
+    fail "the answered helper-keyed decision still lists as open: $out"
+  fi
+
+  # The pending-reply record must also have been resolvable by the correlated line.
+  FM_HOME="$home" ROOT="$ROOT" bash -c '
+    . "$ROOT/bin/fm-pending-reply-lib.sh"
+    fm_pending_reply_try_resolve "$0/state" "$1" "$0/state/domain.status"
+  ' "$home" "$corr" \
+    || fail "the helper --key line should resolve the pending-reply expectation"
+
+  pass "a secondmate helper --key decision is openable under its key and closable by fm-send --resolve-key"
+}
+
 test_remote_reserved_pending_reply_key_closes_locally() {
   local dir fb log home ssh_log rc out key corr
   dir="$TMP_ROOT/remote-reserved"; mkdir -p "$dir"
@@ -742,3 +811,4 @@ test_unclosable_reserved_key_refuses_before_send
 test_long_decision_key_refuses_before_send
 test_failed_close_recovery_command_is_shell_safe
 test_remote_reserved_pending_reply_key_closes_locally
+test_secondmate_helper_keyed_report_then_resolve_key
