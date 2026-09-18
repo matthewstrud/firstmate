@@ -223,8 +223,8 @@ test_ship_modes_generate_clean_briefs() {
 
 # A ship task's delivery mode is firstmate's per-task decision, so a missing or
 # unusable value must stop the scaffold instead of silently defaulting. The
-# no-mistakes-prod-only row is the conditional registry policy: it is never a task
-# mode, and its refusal must say to classify the task's surface first.
+# no-mistakes-prod-only row is the retired conditional registry value: it is never
+# a task mode, and its refusal must say so.
 test_ship_mode_is_required_and_closed_set() {
   local home id out status label flag expect
   home="$TMP_ROOT/mode-required-home"
@@ -243,7 +243,7 @@ test_ship_mode_is_required_and_closed_set() {
 missing --mode||ship briefs require --mode
 empty --mode value|--mode|requires a value
 unknown mode value|--mode nope|must be one of no-mistakes, direct-PR, local-only
-conditional policy is not a task mode|--mode no-mistakes-prod-only|classify this task's surface
+retired conditional value is not a task mode|--mode no-mistakes-prod-only|retired registry value
 ROWS
   pass "fm-brief.sh: ship --mode is required and closed-set validated"
 }

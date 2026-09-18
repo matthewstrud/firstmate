@@ -45,8 +45,8 @@
 #   direct-PR    implement -> push + open PR via gh-axi (no pipeline) -> configured merge authority
 #   local-only   implement on branch, stop and report "ready in branch" (no push/PR);
 #                the configured merge authority approves, firstmate merges to local main
-# no-mistakes-prod-only is a registry policy, not a task mode; resolve it to one of
-# the three concrete modes at intake before calling this script.
+# no-mistakes-prod-only is a retired registry value, not a task mode; pass one of
+# the three concrete modes resolved at intake.
 # The generated ship brief records the chosen mode as a fixed machine-readable
 # "Delivery contract: mode=<mode>" line. bin/fm-spawn.sh reads that line and refuses
 # to launch a ship task whose explicit --mode disagrees, so an adjusted brief and the
@@ -166,7 +166,7 @@ if [ "$KIND" = ship ]; then
   case "$MODE" in
     no-mistakes|direct-PR|local-only) ;;
     no-mistakes-prod-only)
-      echo "error: no-mistakes-prod-only is a registry policy, not a task mode; classify this task's surface and resolve it to no-mistakes or direct-PR at intake" >&2
+      echo "error: no-mistakes-prod-only is a retired registry value, not a task mode; ship direct-PR unless the captain requested no-mistakes for this task at intake" >&2
       exit 1 ;;
     *) echo "error: --mode must be one of no-mistakes, direct-PR, local-only (got '$MODE')" >&2; exit 1 ;;
   esac
