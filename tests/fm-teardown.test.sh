@@ -804,6 +804,41 @@ test_no_mistakes_origin_remote_allows() {
   pass "no-mistakes worktree with HEAD on origin is torn down (no regression)"
 }
 
+# The work ledger outlives the task. Teardown removes state/<id>.* by name and
+# retires the busy record, and neither may reach state/work-ledger/: the PR-ready
+# stamp and the turn rows are the only durable record of what the card cost.
+test_teardown_leaves_the_work_ledger_intact() {
+  local case_dir rc gen ledger
+  case_dir=$(make_case ledger-survives)
+  write_meta "$case_dir" no-mistakes ship
+  wt_commit "$case_dir" "shippable work"
+  git -C "$case_dir/wt" push -q origin fm/task-x1
+  git -C "$case_dir/project" fetch -q origin
+  add_gh_pr_merged_for_head "$case_dir" "$(git -C "$case_dir/wt" rev-parse HEAD)"
+  ledger="$case_dir/state/work-ledger/task-x1.events"
+  gen=$("$ROOT/bin/fm-busy-event.sh" arm "$case_dir/state" task-x1) || fail "ledger-survives: arm failed"
+  "$ROOT/bin/fm-busy-event.sh" apply "$case_dir/state" task-x1 idle --gen "$gen" --source claude-hook --event stop \
+    || fail "ledger-survives: apply failed"
+  FM_ROOT_OVERRIDE="$ROOT" FM_STATE_OVERRIDE="$case_dir/state" PATH="$case_dir/fakebin:$PATH" \
+    "$PR_CHECK" task-x1 https://github.com/example/repo/pull/7 >/dev/null \
+    || fail "ledger-survives: fm-pr-check failed"
+  assert_grep 'row=pr-ready pr=https://github.com/example/repo/pull/7' "$ledger" \
+    "ledger-survives: fm-pr-check did not stamp the PR-ready row"
+
+  set +e
+  run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+
+  expect_code 0 "$rc" "ledger-survives: teardown should succeed: $(cat "$case_dir/stderr")"
+  assert_absent "$case_dir/state/task-x1.busy-state" "ledger-survives: teardown did not retire the busy record"
+  assert_grep "row=arm gen=$gen seq=1" "$ledger" "ledger-survives: teardown lost the arm row"
+  assert_grep "row=turn gen=$gen seq=2 state=idle" "$ledger" "ledger-survives: teardown lost a turn row"
+  assert_grep 'row=pr-ready' "$ledger" "ledger-survives: teardown lost the PR-ready row"
+  assert_grep "row=retire gen=$gen seq=3" "$ledger" "ledger-survives: the retirement was not recorded"
+  pass "teardown retires the task and leaves its work ledger intact"
+}
+
 test_no_mistakes_truly_unpushed_refuses() {
   local case_dir rc
   case_dir=$(make_case nm-unpushed)
@@ -3672,6 +3707,7 @@ test_teardown_manual_backend_leaves_the_backlog_to_the_operator
 test_local_only_truly_unpushed_refuses
 test_local_only_merged_to_local_main_allows
 test_no_mistakes_origin_remote_allows
+test_teardown_leaves_the_work_ledger_intact
 test_no_mistakes_truly_unpushed_refuses
 test_local_only_force_overrides_unpushed
 test_secondmate_pr_registration_publishes_ready_line

@@ -497,6 +497,8 @@ fm_backlog_directory_present "$STATE" "state directory" || {
 . "$SCRIPT_DIR/fm-gate-refuse-lib.sh"
 # shellcheck source=bin/fm-busy-lib.sh
 . "$SCRIPT_DIR/fm-busy-lib.sh"
+# shellcheck source=bin/fm-work-ledger-lib.sh
+. "$SCRIPT_DIR/fm-work-ledger-lib.sh"
 # shellcheck source=bin/fm-cursor-lib.sh
 . "$SCRIPT_DIR/fm-cursor-lib.sh"
 # shellcheck source=bin/fm-pr-lib.sh
@@ -4634,6 +4636,25 @@ if [ -n "$SPAWN_DEFERRED_SIGNAL" ]; then
 fi
 fm_lock_release "$SPAWN_META_LOCK"
 SPAWN_META_LOCK_HELD=0
+
+# One work-ledger spawn row per launch, relaunches included, so a harness or
+# model switch is on record beside the turns it explains. It is written only
+# here, after the commit point, so a refused spawn leaves no row. The card's
+# frozen rating and parent come from its backlog title, and a harness spawn did
+# not arm the busy-state contract for is recorded as unmeasured rather than
+# left to look like zero minutes (bin/fm-work-ledger-lib.sh owns the row format
+# and guarantees the append cannot fail this spawn).
+if [ "$KIND" != secondmate ]; then
+  LEDGER_TITLE=
+  LEDGER_RATING_READ=failed
+  if LEDGER_SHOW=$(fm_backlog_row_show "$DATA" "$ID" --full 2>/dev/null); then
+    LEDGER_RATING_READ=ok
+    LEDGER_TITLE=$(printf '%s\n' "$LEDGER_SHOW" | sed -n 's/^  title: *//p' | head -1)
+  fi
+  LEDGER_PARENT=$(fm_work_ledger_title_field "$LEDGER_TITLE" parent || true)
+  fm_work_ledger_append "$STATE_REAL" "$ID" spawn \
+    "harness=$(fm_work_ledger_token "$HARNESS") model=$(fm_work_ledger_token "$MODEL") kind=$(fm_work_ledger_token "$KIND") parent=$(fm_work_ledger_token "$LEDGER_PARENT") capture=$(fm_work_ledger_harness_capture "$HARNESS" "${BUSY_GEN:-}") $(fm_work_ledger_rating_fields "$LEDGER_TITLE") rating_read=$LEDGER_RATING_READ"
+fi
 
 SPAWN_DELIVERY=
 [ -z "$MODE" ] || SPAWN_DELIVERY=" mode=$MODE yolo=$YOLO"

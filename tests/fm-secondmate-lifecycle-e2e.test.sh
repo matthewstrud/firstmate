@@ -302,6 +302,21 @@ phase_teardown() {
   rm -f "$HOME_DIR/state/pending-replies/aaaaaaaaaaaaaaaa" \
     "$HOME_DIR/state/pending-replies/$other_corr" \
     "$HOME_DIR/state/pending-replies/.delivery-confirmed-$other_corr"
+  # The retiring home holds a work ledger. Retirement must land it in the
+  # parent's store first, and must refuse rather than lose it when it cannot.
+  mkdir -p "$SUB/state/work-ledger"
+  printf 'v1 ts=100 id=card-1 row=spawn harness=claude model=- kind=ship parent=- capture=supported rating=3 rater=fresh blind=yes rated_at=- rating_read=ok\n' \
+    > "$SUB/state/work-ledger/card-1.events"
+  : > "$HOME_DIR/data/work-ledger"
+  if PATH="$FAKEBIN:$PATH" FM_HOME="$HOME_DIR" FM_FAKE_TMUX_LOG="$LOG" FM_FAKE_TMUX_CAPTURE="$PANE" \
+    "$ROOT/bin/fm-teardown.sh" design > "$TMP_ROOT/ledger-refusal.out" 2>&1; then
+    fail "local retirement removed a home whose work ledger could not be copied"
+  fi
+  assert_grep 'still holds a work ledger that could not be copied' "$TMP_ROOT/ledger-refusal.out" \
+    "the work-ledger refusal did not say why"
+  assert_present "$SUB/state/work-ledger/card-1.events" "a refused retirement lost the work ledger"
+  assert_present "$HOME_DIR/state/design.meta" "a refused work-ledger retirement removed parent metadata"
+  rm -f "$HOME_DIR/data/work-ledger"
   printf 'confirmed:%s\n' "$corr" > "$HOME_DIR/state/.backlog-handoff-design.wake-pending"
   : > "$LOG"
   teardown_out=$(PATH="$FAKEBIN:$PATH" FM_HOME="$HOME_DIR" FM_FAKE_TMUX_LOG="$LOG" FM_FAKE_TMUX_CAPTURE="$PANE" \
@@ -310,6 +325,8 @@ phase_teardown() {
   printf '%s\n' "$teardown_out" | grep -F 'Backlog:' >/dev/null \
     && fail "secondmate teardown emitted a main-backlog completion reminder"
   assert_absent "$SUB" "teardown did not remove the retired secondmate home"
+  assert_grep 'id=card-1 row=spawn' "$HOME_DIR/data/work-ledger/design/card-1.events" \
+    "retirement removed the home without keeping its work ledger"
   assert_absent "$HOME_DIR/state/design.meta" "teardown did not clear the parent meta"
   assert_absent "$HOME_DIR/state/.backlog-handoff-design.wake-pending" \
     "teardown left receiver wake state that could poison a replacement route"

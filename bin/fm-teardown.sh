@@ -2487,12 +2487,31 @@ EOF
   printf '%s\n' "$abs_home_path"
 }
 
+# A retiring home takes its work ledger with it, and this is the one place a
+# missed copy would lose that history for good, so the removal refuses until
+# the ledger is in this home's store (bin/fm-work-ledger.sh owns the copy). A
+# home that recorded nothing has nothing to lose and is not held up.
+preserve_firstmate_home_work_ledger() {
+  local home=$1 label=$2 lane=${3:-} events
+  [ -n "$lane" ] || lane=$(cat "$home/$SUB_HOME_MARKER" 2>/dev/null || true)
+  for events in "$home/state/work-ledger"/*.events; do
+    [ -e "$events" ] || continue
+    if FM_HOME="$FM_HOME" FM_DATA_OVERRIDE="$DATA" "$SCRIPT_DIR/fm-work-ledger.sh" copy --home "$home" --lane "$lane" >/dev/null; then
+      return 0
+    fi
+    echo "REFUSED: $label $home still holds a work ledger that could not be copied into $DATA/work-ledger; removing it would lose that history" >&2
+    return 1
+  done
+  return 0
+}
+
 remove_firstmate_home() {
   local home=$1 label=$2 expected_id=${3:-} abs_home_path process_event_backup
   [ -n "$home" ] || return 0
   [ -e "$home" ] || return 0
   abs_home_path=$(validate_firstmate_home_for_removal "$home" "$label" "$expected_id") || return 1
   [ -n "$abs_home_path" ] || return 0
+  preserve_firstmate_home_work_ledger "$abs_home_path" "$label" "$expected_id" || return 1
   process_event_backup=$(snapshot_firstmate_home_process_events "$abs_home_path" "$label") || return 1
   if ! cleanup_firstmate_home_process_events "$abs_home_path" "$label"; then
     restore_firstmate_home_process_events "$abs_home_path" "$label" "$process_event_backup" || return $?

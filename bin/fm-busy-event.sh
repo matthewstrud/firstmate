@@ -35,6 +35,12 @@
 #       an old task from retiring a newly armed incarnation. A missing sidecar
 #       is already retired, so any orphan record is removed idempotently.
 #
+# Work ledger: inside the same lock, and only after the record write (or the
+# retirement) succeeded, arm, apply, and retire each append one row to
+# <state-dir>/work-ledger/<id>.events. bin/fm-work-ledger-lib.sh owns that row
+# format and its fail-open rule: a failed append never changes this script's
+# exit code or output, so capture can never block or fail a turn.
+#
 # Exit codes: 0 applied; 1 refused (stale gen, unarmed task, lock timeout,
 # invalid input); 2 usage. Adapter hook command lines append `|| true` so a
 # refusal never breaks the harness's own lifecycle.
@@ -55,6 +61,8 @@ EOF
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=bin/fm-busy-lib.sh
 . "$SCRIPT_DIR/fm-busy-lib.sh"
+# shellcheck source=bin/fm-work-ledger-lib.sh
+. "$SCRIPT_DIR/fm-work-ledger-lib.sh"
 
 CMD=${1:-}
 case "$CMD" in
@@ -152,6 +160,30 @@ write_record() {  # <gen> <seq>
   mv -f "$tmp" "$REC"
 }
 
+# Called with the lock held and the mutation already durable.
+ledger_row() {  # <row-kind> <gen> <seq> <state>
+  fm_work_ledger_append "$STATE" "$ID" "$1" \
+    "gen=$2 seq=$3 state=$4 source=${SOURCE:--} event=${EVENT:--}"
+}
+
+# The seq of the record currently held for <gen>, or 0 when there is none.
+record_seq() {  # <gen>
+  local line field
+  [ -f "$REC" ] || { printf '0\n'; return 0; }
+  line=$(head -n 1 "$REC" 2>/dev/null || true)
+  case "$line" in
+    *" gen=$1 "*)
+      field=${line##* seq=}
+      field=${field%% *}
+      case "$field" in
+        ''|*[!0-9]*) printf '0\n' ;;
+        *) printf '%s\n' "$field" ;;
+      esac
+      ;;
+    *) printf '0\n' ;;
+  esac
+}
+
 old_umask=$(umask)
 umask 077
 
@@ -162,6 +194,7 @@ if [ "$CMD" = arm ]; then
     printf '%s\n' "$GEN" > "$GEN_FILE.tmp.$$" && mv -f "$GEN_FILE.tmp.$$" "$GEN_FILE" \
       && write_record "$GEN" 1 && rm -f "$STATE/$ID.progress"
   } || { lock_release; umask "$old_umask"; echo "error: arm failed for $ID" >&2; exit 1; }
+  ledger_row arm "$GEN" 1 "$NEW_STATE"
   lock_release
   umask "$old_umask"
   printf '%s\n' "$GEN"
@@ -208,12 +241,16 @@ if [ "$GEN" != "$CURRENT" ]; then
   exit 1
 fi
 if [ "$CMD" = retire ]; then
+  RETIRE_SEQ=$(($(record_seq "$GEN") + 1))
   rm -f "$GEN_FILE" "$REC" "$STATE/$ID.progress" || {
     lock_release
     umask "$old_umask"
     echo "error: busy-state retirement failed for $ID" >&2
     exit 1
   }
+  SOURCE=fm-retire
+  EVENT=retire
+  ledger_row retire "$GEN" "$RETIRE_SEQ" retired
   lock_release
   umask "$old_umask"
   exit 0
@@ -224,26 +261,14 @@ if [ "$CMD" = progress ]; then
   umask "$old_umask"
   exit 0
 fi
-OLD_SEQ=0
-if [ -f "$REC" ]; then
-  old_line=$(head -n 1 "$REC" 2>/dev/null || true)
-  case "$old_line" in
-    *" gen=$GEN "*)
-      old_seq_field=${old_line##* seq=}
-      old_seq_field=${old_seq_field%% *}
-      case "$old_seq_field" in
-        ''|*[!0-9]*) OLD_SEQ=0 ;;
-        *) OLD_SEQ=$old_seq_field ;;
-      esac
-      ;;
-  esac
-fi
+OLD_SEQ=$(record_seq "$GEN")
 write_record "$GEN" $((OLD_SEQ + 1)) || {
   lock_release
   umask "$old_umask"
   echo "error: record write failed for $ID" >&2
   exit 1
 }
+ledger_row turn "$GEN" $((OLD_SEQ + 1)) "$NEW_STATE"
 lock_release
 umask "$old_umask"
 exit 0

@@ -553,6 +553,24 @@ The locked bootstrap inheritance pass uses the same placement-specific behavior;
 That live discovery starts from `state/*.meta` records with `kind=secondmate`; `data/secondmates.md` only backfills `home=` for older or incomplete meta records.
 Skipped items, such as a destination checkout that does not yet gitignore the item, are visible warnings but not hard failures.
 
+## Work ledger (state/work-ledger/, data/work-ledger/)
+
+Firstmate records what each card costs in worker time as the work happens, so a card taking far longer than its difficulty warrants is visible before it finishes rather than rebuilt afterwards.
+Nothing has to be remembered for this to happen: the rows are written by the same turn-boundary writer every measured worker runtime already calls, by dispatch, by PR registration, and by the merge outcome.
+`bin/fm-work-ledger-lib.sh`'s header owns the row format and the rule that capture can never block or fail a turn, and `bin/fm-work-ledger.sh`'s header owns the store, the three reported edges, and the measurement rules.
+
+Each home writes `state/work-ledger/<task-id>.events`, which outlives the task, its local copy, and any relaunch.
+The primary home copies every local second mate's ledger into `data/work-ledger/<lane>/`, and retiring a second mate copies its ledger first and refuses the retirement when that copy fails.
+Remote second mates are not covered, and a worker runtime that reports no turn boundaries is recorded as unmeasured rather than as zero.
+
+Arm the check once, in the primary home only, with `bin/fm-work-ledger.sh arm`; it refuses in a second mate's home, and `disarm` ends it.
+Like the watched tool check below, a registered check is itself a reason to keep watching.
+The check is edge-triggered and has no timer: a run in which nothing changed prints nothing, and each over-budget level, capture failure, and five-card lane digest is reported once.
+The [`work-ledger` skill](../.agents/skills/work-ledger/SKILL.md) owns what firstmate does with each report and the backlog title fields that carry a card's rating and parent.
+
+`FM_WORK_LEDGER_MEDIAN_MIN_PER_POINT` (default 9.9) is the inherited minutes-per-point median used until the store holds `FM_WORK_LEDGER_OWN_MEDIAN_CARDS` (default 13) rated, complete, merged cards, and `FM_WORK_LEDGER_DIGEST_CARDS` (default 5) sets the digest size.
+All three thresholds are post hoc, and the reports label them so.
+
 ## Watched tool updates (config/watched-tools.json)
 
 `config/watched-tools.json` is an optional local, gitignored list of the tools this home depends on.
