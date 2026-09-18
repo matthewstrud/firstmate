@@ -673,10 +673,49 @@ test_helper_key_at_tail_is_silently_ignored() {
   pass "a key at the tail of the note is silently ignored; only the note-head position works"
 }
 
+test_helper_rejects_option_shaped_key_value() {
+  local dir state parent mate corr
+  dir=$(make_case helper-option-key)
+  state="$dir/state"
+  parent="$dir"
+  mate="$dir/mate"
+  mkdir -p "$mate/state"
+  printf 'pinned\n' > "$mate/.fm-secondmate-home"
+  cat > "$mate/.fm-secondmate-parent" <<EOF
+schema=fm-secondmate-parent.v1
+route=local
+parent_home=$parent
+EOF
+  corr=$(bash -c '. "$1"; fm_pending_reply_new_id' _ "$ROOT/bin/fm-pending-reply-lib.sh")
+
+  # "--key --doc" used to consume "--doc" as the key value: it is charset-valid,
+  # so the check passed, doc mode silently never engaged, and a decision opened
+  # under the literal key "--doc". It must now refuse before writing anything.
+  if FM_HOME="$mate" "$REPORT" --key --doc done "$corr" data/x/report.md "see report" \
+    >"$dir/out" 2>"$dir/err"; then
+    fail "an option-shaped --key value must refuse"
+  fi
+  assert_contains "$(cat "$dir/err")" "not a valid decision key" \
+    "the option-shaped key refusal should be explicit"
+  [ ! -e "$state/pinned.status" ] \
+    || fail "a refused --key value still wrote a status line: $(cat "$state/pinned.status")"
+
+  # A key starting with a dash is never a legitimate decision key.
+  if FM_HOME="$mate" "$REPORT" --key -x needs-decision "$corr" "wall note" \
+    >"$dir/out2" 2>"$dir/err2"; then
+    fail "a dash-leading --key value must refuse"
+  fi
+  assert_contains "$(cat "$dir/err2")" "not a valid decision key" \
+    "the dash-leading key refusal should be explicit"
+
+  pass "the helper refuses option-shaped and dash-leading --key values before writing"
+}
+
 test_helper_keyed_report_opens_and_closes_keyed_decision
 test_helper_keyless_call_is_byte_identical_to_historical
 test_helper_keyed_doc_report
 test_helper_key_at_tail_is_silently_ignored
+test_helper_rejects_option_shaped_key_value
 test_tokened_opener_opens_and_tokened_closer_closes
 test_token_is_read_through_in_every_position_it_is_written_in
 test_untokened_pair_is_unchanged

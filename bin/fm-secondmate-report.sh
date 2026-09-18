@@ -72,8 +72,8 @@ done
 
 if [ "$KEY_SET" = 1 ]; then
   case "$KEY" in
-    ''|*[!A-Za-z0-9._-]*)
-      echo "error: --key '$KEY' is not a valid decision key (allowed: A-Z a-z 0-9 . _ -)" >&2
+    ''|*[!A-Za-z0-9._-]*|-*)
+      echo "error: --key '$KEY' is not a valid decision key (nonempty, A-Z a-z 0-9 . _ -, and not starting with -)" >&2
       exit 1
       ;;
   esac
